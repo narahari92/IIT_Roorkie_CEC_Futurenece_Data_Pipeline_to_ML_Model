@@ -8,7 +8,7 @@
 | Part 0 — Discovery & Data Issues Log | ✅ below |
 | Part A — ETL pipeline | ✅ below |
 | Part B — ELT pipeline | ✅ below |
-| Part C — Scheduling answers | ⏳ |
+| Part C — Scheduling answers | ✅ below |
 | Part D — Data quality dimensions | ⏳ |
 | Part E — Governance answers | ⏳ |
 | Part F — Observability results | ⏳ |
@@ -229,3 +229,44 @@ astro dev run dags test nammamart_elt_hosur_narahari --conf '{"increment_file": 
 .venv/bin/python scripts/wh.py "select * from mart_payment_mode_revenue"
 .venv/bin/python scripts/wh.py "select order_id, order_status, _source_file from raw_orders where order_id='ORD000017'"   # history
 ```
+
+
+---
+
+## Part C — Scheduling both DAGs for 9:00 AM IST, Monday–Saturday
+
+Both DAG files carry the same block (see the comment header in each):
+
+```python
+SCHEDULE   = "0 9 * * 1-6"                                   # 09:00 Mon–Sat, in the start_date's timezone
+START_DATE = pendulum.datetime(2026, 10, 1, tz="Asia/Kolkata")  # timezone-aware → cron is evaluated in IST
+default_args = {"owner": "hosur_narahari", "retries": 2, "retry_delay": timedelta(minutes=1),
+                "execution_timeout": timedelta(minutes=10)}
+@dag(schedule=SCHEDULE, start_date=START_DATE, catchup=False, dagrun_timeout=timedelta(minutes=20), max_active_runs=1, ...)
+```
+
+**What the scheduler recorded after the change** (from the Airflow metadata DB, `dag` and `dag_run` tables):
+
+| | `nammamart_etl_hosur_narahari` | `nammamart_elt_hosur_narahari` |
+|---|---|---|
+| `timetable_summary` | `0 9 * * 1-6` | `0 9 * * 1-6` |
+| `next_dagrun` | **2026-10-21 03:30:00+00** (= Wed 09:00 IST) | **2026-10-21 03:30:00+00** |
+| Catch-up runs created when the schedule was applied (22:00 IST, Tue 20 Oct) | exactly **one**: `scheduled__2026-10-20T03:30:00+00:00` → success in 11.7 s | exactly **one**: `scheduled__2026-10-20T03:30:00+00:00` → success in 19.4 s |
+
+Both scheduled runs started in the same second (16:34:07 UTC). Eight tasks (`raw_*`, `stg_customers`, `stg_products`, `validate_payments`, `reconcile`) logged `lock busy, waiting…` because the two DAGs share one DuckDB file — all waited a second or two and succeeded, no retry was consumed.
+
+### Answers
+
+**1. What is your cron expression?**
+`0 9 * * 1-6` — minute 0, hour 9, any day-of-month, any month, days 1–6 (Monday–Saturday). Airflow evaluates it in the timezone of `start_date`, which is `Asia/Kolkata`, so it means 09:00 IST. *Justifications:* `catchup=False` because every export is a full snapshot (`orders.csv` is the whole month) — replaying each missed 9 AM would reload identical files N times and give finance nothing new; the latest slot is all that matters. `retries=2` with `retry_delay=1 min` absorbs the two realistic transient failures (a late-landing file, or the other DAG holding the DuckDB lock) while still finishing by ~09:05. `execution_timeout=10 min` per task and `dagrun_timeout=20 min` make a hang fail loudly inside the SLA window rather than at 09:30 with nothing to show.
+
+**2. What time does the run show in UTC in the Airflow UI?**
+**03:30 UTC.** IST is UTC+5:30 with no daylight saving, so 09:00 IST is always 03:30 UTC. The UI's *Next run* / `logical_date` for both DAGs reads `2026-10-21 03:30:00+00:00`, and the run IDs are `scheduled__2026-10-20T03:30:00+00:00`. (Airflow stores and displays everything in UTC; the IST intent lives in the DAG's timezone.)
+
+**3. What would happen at 9 AM if you had left the `start_date` in UTC?**
+Nothing — at 09:00 IST the scheduler would be idle. A naive/UTC `start_date` makes Airflow read `0 9 * * 1-6` as 09:00 **UTC**, which is **14:30 IST**. The run would fire five and a half hours after Kavya's 09:30 stand-up, every day, with no error anywhere: the DAG is green, the schedule looks right, and the numbers are simply never there in time. (Day-of-week would still line up because 14:30 IST is the same calendar day; had the slot been before 05:30 IST, the UTC date would also shift and Saturday's run would land on Friday.) This is the classic silent timezone bug, and the reason the timezone is explicit in `pendulum.datetime(..., tz="Asia/Kolkata")`.
+
+**4. What happens if your laptop or Docker is off at 9 AM?**
+No run happens at 9 — there is no scheduler alive to create it, so the 09:30 meeting has no fresh numbers. When Docker comes back, the scheduler notices the most recent slot (`2026-10-20T03:30`) has no run and, because `catchup=False`, creates **one** run for that slot and executes it immediately — this is exactly what happened above when the schedule was applied at 22:00 IST: one `scheduled__2026-10-20T03:30` run per DAG, not runs for 1–19 October. If the laptop had been off for a week, still only the latest slot would run (correct for full-snapshot files). The honest conclusion for Sameer: a laptop is not a production scheduler. The pipeline should run on an always-on host (a small VM with `astro dev start`, or a managed Airflow deployment), and Part F adds a `pipeline_runs` audit row plus a failure alert so that "no run by 09:05" is noticed rather than discovered in the meeting.
+
+**Screenshots to capture for the submission** (UI at `http://…localhost:6563`): DAGs list showing *Schedule* `0 9 * * 1-6` and *Next run* `2026-10-21, 03:30:00 UTC`; the Grid view of either DAG showing the single `scheduled__2026-10-20T03:30:00+00:00` run in green.

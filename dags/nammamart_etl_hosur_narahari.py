@@ -37,6 +37,21 @@ from nammamart import warehouse as W
 
 DAG_ID = f"nammamart_etl_{C.NAME}"
 
+# ── Scheduling (Part C) ───────────────────────────────────────────────────────
+# Client SLA: numbers ready before the 9:30 IST stand-up, Monday to Saturday.
+#   SCHEDULE   = "0 9 * * 1-6"  → 09:00 every Mon–Sat, evaluated in the start_date's
+#                timezone (Asia/Kolkata), i.e. 03:30 UTC. Airflow defaults to UTC, so a
+#                naive start_date would silently fire at 09:00 UTC = 14:30 IST — after the meeting.
+#   catchup    = False → if the laptop/Docker was off, Airflow runs ONE run for the latest
+#                missed slot when it comes back, not one per missed day. The CSV exports are
+#                full snapshots (orders.csv is the whole month) so a back-fill of every missed
+#                9 AM would just reload the same files N times for no benefit.
+#   retries    = 2 × 1 min → survives a transient DuckDB lock (the two DAGs share one file)
+#                or a file that lands a minute late, while still finishing well before 9:30.
+#   execution_timeout = 10 min per task → a hung task fails loudly instead of eating the SLA.
+SCHEDULE = "0 9 * * 1-6"
+START_DATE = pendulum.datetime(2026, 10, 1, tz=C.TZ)      # timezone-aware: Asia/Kolkata
+
 default_args = {
     "owner": C.NAME,
     "retries": 2,
@@ -56,9 +71,10 @@ def _param(name: str) -> str:
 @dag(
     dag_id=DAG_ID,
     description="NammaMart ETL: validate in Python, quarantine bad rows, load a star schema to DuckDB",
-    schedule=None,                                            # ← set to 9:00 IST Mon–Sat in Part C
-    start_date=pendulum.datetime(2026, 10, 1, tz=C.TZ),
+    schedule=SCHEDULE,                                        # 09:00 IST Mon–Sat (= 03:30 UTC)
+    start_date=START_DATE,
     catchup=False,
+    dagrun_timeout=timedelta(minutes=20),                     # whole run must finish well before 09:30
     default_args=default_args,
     max_active_runs=1,                                        # one writer to the DuckDB file at a time
     tags=["nammamart", "etl", C.NAME],
