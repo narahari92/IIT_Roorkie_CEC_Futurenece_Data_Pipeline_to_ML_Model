@@ -69,8 +69,9 @@ def _param(name: str) -> str:
         "customers_file": Param(C.SOURCE_FILES["customers"], type="string"),
         "products_file": Param(C.SOURCE_FILES["products"], type="string"),
         "stores_file": Param(C.SOURCE_FILES["stores"], type="string"),
-        "increment_file": Param("", type="string",
-                                description="Optional next-day orders file to append to raw and MERGE into staging"),
+        "increment_file": Param(None, type=["null", "string"],
+                                description="Optional next-day orders file to append to raw and MERGE into staging. "
+                                            "Leave empty for a normal daily run."),
     },
 )
 def nammamart_elt():
