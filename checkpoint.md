@@ -19,8 +19,8 @@
 
 ## Parts
 - [x] **Part 0** — Discovery & data profiling → Data Issues Log (39 issues, all 6 files) + 3 client questions. Artifacts: `SUBMISSION.md` §Part 0, `include/nammamart/profiling/{profile_data.py,profile_report.md,issue_candidates.csv}`. Approved.
-- [x] **Part A** — ETL DAG `dags/nammamart_etl_hosur_narahari.py` + helpers `include/nammamart/{config,quality,standardise,masking,warehouse,etl_steps}.py`. Verified: parses, green run in UI, idempotent (re-run → 0 inserts), increment via `--conf '{"orders_file": "orders_2026-10-01_increment.csv"}'` → updated=10 inserted=150. **Awaiting user review.**
-- [ ] **Part B** — ELT DAG (Raw → Staging → Mart, SQL files, MERGE incremental)
+- [x] **Part A** — ETL DAG `dags/nammamart_etl_hosur_narahari.py` + helpers `include/nammamart/{config,quality,standardise,masking,warehouse,etl_steps}.py`. Verified: parses, green run in UI, idempotent (re-run → 0 inserts), increment via `--conf '{"orders_file": "orders_2026-10-01_increment.csv"}'` → updated=10 inserted=150. Approved.
+- [x] **Part B** — ELT DAG `dags/nammamart_elt_hosur_narahari.py` + `include/nammamart/elt_steps.py` + 14 SQL files in `include/sql/` (raw_load, stg_common_ddl, stg_×5, mart_×7). Verified: green run, raw append-only, staging MERGE (+150/10 updated), marts match ETL exactly (Sept 2088 / 1,135,628.80 / 260,999.43). Increment via `--conf '{"increment_file": "orders_2026-10-01_increment.csv"}'`. **Awaiting user review.**
 - [ ] **Part C** — Schedule both at 9:00 AM IST Mon–Sat (cron, pendulum tz, catchup, retries) + answers
 - [ ] **Part D** — DQ checks across 6 dimensions in both pipelines, `dq_results` table
 - [ ] **Part E** — Governance answers (9 questions)
@@ -51,3 +51,11 @@
   - Intermediate data in `include/work/hosur_narahari/<run_id>/` (git-ignored); XCom carries only paths/counts.
   - Base-state totals (orders.csv only): fact 2310 rows, 2088 delivered, net revenue 1,135,628.80, gross margin 260,999.43; 138 quarantined (102 orders, 29 payments, 5 customers, 2 products); 156 reconciliation mismatches.
   - After increment: fact 2460, Sept revenue 1,131,435.10 (10 returns), Oct 79,652.20.
+- Part B design decisions:
+  - Raw: `INSERT … WHERE NOT EXISTS (run_id, source_file)` — append-only, re-run of same run_id is a no-op. `_row_num` added for lineage.
+  - Staging: per-file batch (`_run_id`,`_source_file`) → TEMP `_batch` with one boolean per rule → failure_reason/dq_warnings/dq_status → `stg_rejections` (raw_row JSON) → MERGE survivors on key. Rules/names identical to quality.py.
+  - stg_orders holds PASSED and FAILED survivors (2400 = 2310 + 90); marts filter dq_status='PASSED'. Duplicate rows only in stg_rejections.
+  - Increment = `raw_increment` + `stg_merge_increment` tasks (skip via AirflowSkipException if `increment_file` param empty); marts use trigger_rule none_failed. dq check names for the increment batch are prefixed `orders_increment.`.
+  - Marts chained sequentially (single DuckDB writer); connect() retries ~60 s on lock for the 5 parallel raw loads.
+  - `compare_with_etl` final task prints Sept totals of both pipelines and `match` flag.
+  - Reserved words bit me: `name`/`rows` can't be bare aliases in DuckDB.

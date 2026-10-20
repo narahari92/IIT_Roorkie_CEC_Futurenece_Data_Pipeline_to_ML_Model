@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import contextlib
+import random
 import time
+from string import Template
 
 import duckdb
 import pandas as pd
@@ -36,18 +38,21 @@ CREATE TABLE IF NOT EXISTS pipeline_runs (
 
 
 @contextlib.contextmanager
-def connect(read_only: bool = False, retries: int = 5, wait: float = 3.0):
-    """DuckDB allows one writer per file. The ETL and ELT DAGs share a file, so
-    retry briefly if the other DAG holds the lock."""
+def connect(read_only: bool = False, retries: int = 40, wait: float = 1.5):
+    """DuckDB allows ONE writer process per file. Parallel Airflow tasks (and the
+    ETL + ELT DAGs) share this file, so wait politely for the lock instead of failing.
+    40 × ~1.5 s ≈ 60 s of patience, which covers any task in these pipelines."""
     C.WAREHOUSE_DB.parent.mkdir(parents=True, exist_ok=True)
     last = None
-    for _ in range(retries):
+    for attempt in range(retries):
         try:
             con = duckdb.connect(str(C.WAREHOUSE_DB), read_only=read_only)
             break
         except duckdb.IOException as e:  # lock held by another process
             last = e
-            time.sleep(wait)
+            if attempt == 0:
+                print(f"[warehouse] lock busy, waiting… ({e})")
+            time.sleep(wait + random.random())
     else:
         raise last
     try:
@@ -101,3 +106,11 @@ def write_pipeline_run(con, row: dict):
         [row["run_id"], row["dag_id"], row["start_time"], row["end_time"],
          row["rows_extracted"], row["rows_loaded"], row["rows_quarantined"], row["status"]],
     )
+
+
+def run_sql_file(con, name: str, **params) -> str:
+    """Render include/sql/<name>.sql with $param placeholders and execute it (multi-statement)."""
+    path = C.SQL_DIR / (name if name.endswith(".sql") else f"{name}.sql")
+    sql = Template(path.read_text()).safe_substitute(**params)
+    con.execute(sql)
+    return sql

@@ -6,8 +6,8 @@
 | Section | Status |
 |---|---|
 | Part 0 — Discovery & Data Issues Log | ✅ below |
-| Part A — ETL pipeline | ⏳ |
-| Part B — ELT pipeline | ⏳ |
+| Part A — ETL pipeline | ✅ below |
+| Part B — ELT pipeline | ✅ below |
 | Part C — Scheduling answers | ⏳ |
 | Part D — Data quality dimensions | ⏳ |
 | Part E — Governance answers | ⏳ |
@@ -119,3 +119,113 @@ Count: **39 issues across all 6 files**, every one of the six quality dimensions
 3. **Master-data gaps that need a business owner, not a rule** — store S07 has no zone (BTM Layout → South?), S12 has capacity 0, three products have no category, P0109 has a negative MRP, and 4 products are priced below cost. Who owns these corrections, and until they are fixed should I default (e.g. S07 → South, `Unknown` category) or exclude those rows from zone/category reports?
 
 *(Bonus question I'd also raise: "Pending??" orders — is Pending a real state we should add to the allowed list, and should the exported `payment_mode` typos `Cashh`/`cod` be fixed at source in the OMS?)*
+
+
+---
+
+## Part A — ETL pipeline (`dags/nammamart_etl_hosur_narahari.py`)
+
+**Flow:** Extract → Validate → Quarantine → Transform → Load → Reconcile → Report (16 tasks).
+
+```
+extract_customers ─► validate_customers ─┐
+extract_products  ─► validate_products  ─┼─► validate_orders ─► validate_payments ─► quarantine_summary
+extract_stores    ─► validate_stores    ─┤          │                  │          └► write_dq_results
+extract_orders    ──────────────────────┘          ▼                  ▼
+extract_payments  ────────────────────────────► transform ─────────► load ─► reconcile ─► report
+```
+
+| Step | Where | What it does |
+|---|---|---|
+| Extract | 5 parallel tasks → `etl_steps.extract` | Reads each CSV as text (exactly as received), checks the column contract (fails loudly on schema drift), snapshots to `include/work/hosur_narahari/<run_id>/`. XCom carries only paths + counts. |
+| Validate | 5 tasks, 3 waves → `standardise.py` + `quality.py` | Standardise first (trim, upper/Title case, `upi`/`UPI `/`CARD`/`cod`/`Cashh` → canonical), then run **65 rules** across the 6 dimensions. Dims in parallel; orders after dims (FK to *clean* dims); payments after orders. |
+| Quarantine | inside each validate + `quarantine_summary` | Critical failures → `include/quarantine/hosur_narahari/<file>_failed_<run_id>.csv` (row as received + `failure_reason` + `dq_warnings`) and table `etl_quarantine` (raw row as JSON). `summary_<run_id>.json` per run. |
+| Transform | `etl_steps.transform` (pandas) | Dedupe customers (keep last) / products (drop "(old)"), mask email/phone, cast types, join orders↔customer/product/store, derive `order_date`, `is_delivered`, `net_revenue`, `cogs`, `gross_margin`, `within_15_min`. Blank `zone`/`category` → `Unknown`. |
+| Load | `warehouse.upsert` | Star schema: `etl_fact_orders` + `etl_dim_customer`, `etl_dim_product`, `etl_dim_store` (+ `etl_payments`). Dims fully replaced; fact **delete-by-`order_id` then insert** → idempotent and applies corrections. |
+| Reconcile | `etl_steps.reconcile` | `etl_payment_reconciliation`: one row per mismatch with `reason` ∈ {amount_mismatch, delivered_without_payment, delivered_but_payment_failed, returned_without_refund, returned_but_not_refunded, payment_for_quarantined_order, payment_without_order, cancelled_but_payment_success, payment_mode_mismatch}. |
+| Report | `etl_steps.report` | Builds `etl_daily_zone_revenue`, `etl_category_margin`, prints them + total revenue in the log. |
+
+**Evidence (base run on `orders.csv`):**
+
+| Metric | Value |
+|---|---|
+| Rows in → loaded → quarantined (orders) | 2,412 → 2,310 → 102 |
+| Payments in → loaded → quarantined | 2,228 → 2,199 → 29 |
+| Customers / products / stores quarantined | 5 (superseded duplicates) / 2 ("(old)" rows) / 0 |
+| Delivered orders, net revenue, gross margin | 2,088 · ₹1,135,628.80 · ₹260,999.43 |
+| Re-run (idempotency) | `etl_fact_orders: before=2310 updated=2310 inserted=0 after=2310` |
+| Increment `{"orders_file": "orders_2026-10-01_increment.csv"}` | `before=2310 updated=10 inserted=150 after=2460`; Sept revenue → ₹1,131,435.10 |
+| `dq_results` rows per run | 72 |
+| Reconciliation mismatches | 156 |
+
+**Design decisions worth flagging**
+1. *Dimension attribute defects don't delete facts.* Blank `category`, `mrp ≤ 0`, future `signup_date`, blank `zone` are **Warning** (filled with `Unknown` / kept). The strict version cascaded ~70 perfectly valid orders into quarantine for a master-data gap; finance would lose revenue over a catalogue typo.
+2. *Two FK reason codes.* `orders.product_id_in_master` = id never existed; `orders.product_row_quarantined` = id exists but its master row failed a Critical rule. Finance sees *why* an order is missing.
+3. *Payments FK is incremental-aware:* known orders = today's raw orders ∪ orders already in the warehouse, so loading only the increment file doesn't reject 2,000 valid payments.
+4. *Money problems are reconciled, not quarantined.* A short/failed/missing payment loads the order and lands in `etl_payment_reconciliation`; finance sees the gap instead of revenue silently disappearing.
+
+**Run it**
+```bash
+scripts/astro_corp.sh start                       # or `astro dev start` on an open network
+astro dev run dags test nammamart_etl_hosur_narahari
+astro dev run dags test nammamart_etl_hosur_narahari --conf '{"orders_file": "orders_2026-10-01_increment.csv"}'
+.venv/bin/python scripts/wh.py "select * from etl_category_margin"
+```
+
+---
+
+## Part B — ELT pipeline (`dags/nammamart_elt_hosur_narahari.py`)
+
+**Flow:** Extract → Load raw → Transform in the warehouse with SQL (20 tasks; every transformation is a `.sql` file in `include/sql/`, rendered with `$params` and executed verbatim by `elt_steps.py`).
+
+```
+raw_customers ─► stg_customers ─┐
+raw_products  ─► stg_products  ─┼─► stg_orders ─► stg_payments ─► raw_increment ─► stg_merge_increment
+raw_stores    ─► stg_stores    ─┤                                 (skipped unless increment_file set)
+raw_orders    ─────────────────┘                                                  │
+raw_payments  ──────────────────────────────────────────────────────────────────┘
+      ▼
+mart_daily_store_kpis ► mart_category_margin ► mart_delivery_sla ► mart_payment_reconciliation
+   ► mart_payment_mode_revenue ► mart_top_customers ► mart_rejections ► compare_with_etl
+```
+
+| Layer | Tables | SQL | Rule |
+|---|---|---|---|
+| **Raw** | `raw_orders`, `raw_payments`, `raw_customers`, `raw_products`, `raw_stores` | `raw_load.sql` | `read_csv(all_varchar=true, parallel=false)` → every column text, plus `_loaded_at`, `_source_file`, `_run_id`, `_row_num` (position in file). **Append-only**: `INSERT … WHERE NOT EXISTS (same run_id+file)` — re-running a run_id is a no-op, a new run appends. Nothing is ever cleaned or deleted. The Python wrapper only checks the column contract and fails loudly if it changed. |
+| **Staging** | `stg_orders`, `stg_payments`, `stg_customers`, `stg_products`, `stg_stores` + `stg_rejections` | `stg_<entity>.sql` | Batch = this run's rows for this file. CTE chain: standardise (trim, `NULLIF`, casing, payment-mode `CASE`) → `try_cast`/`try_strptime` → one boolean per rule (same names as the Python rules) → `failure_reason` (Critical) / `dq_warnings` (Warning) → `dq_status`. Failed rows → `stg_rejections` with the raw row as JSON. Survivors (one per key) **`MERGE INTO stg_x … WHEN MATCHED THEN UPDATE WHEN NOT MATCHED THEN INSERT`**. PII masked here (`email_masked`, `phone_masked`). Every check → `dq_results`. |
+| **Mart** | `mart_daily_store_kpis`, `mart_category_margin`, `mart_delivery_sla`, `mart_payment_reconciliation`, `mart_top_customers` (+ `mart_payment_mode_revenue`, `mart_rejections`) | `mart_*.sql` | `CREATE OR REPLACE TABLE … FROM stg_* WHERE dq_status='PASSED'`. Only DELIVERED counts as revenue. Rebuilt every run → idempotent by construction. `mart_daily_store_kpis` also carries the store-capacity check (bonus). |
+
+**Incremental load (B.3).** Trigger with `{"increment_file": "orders_2026-10-01_increment.csv"}`:
+
+| Observation | Value |
+|---|---|
+| `raw_orders` | 2,412 → 4,984 after a re-run + increment (append-only; `ORD000017` now has a DELIVERED row from `orders.csv` *and* a RETURNED row from the increment — full history) |
+| `stg_orders` | 2,400 → **2,550 (+150 inserted, 10 updated in place)**; `COUNT(DISTINCT order_id) = COUNT(*)` — no duplicates |
+| The 10 corrected orders | `order_status = RETURNED`, `_source_file = orders_2026-10-01_increment.csv`, `dq_status = PASSED` |
+| September revenue in marts | ₹1,135,628.80 → ₹1,131,435.10 (the 10 returns no longer count) |
+
+**Do the mart totals match ETL? (B.4)** Yes — `compare_with_etl` is the last task and prints it:
+
+| September | ETL (`etl_fact_orders`) | ELT (`stg_orders` PASSED / marts) |
+|---|---|---|
+| Clean orders | 2,310 | 2,310 |
+| Delivered orders | 2,088 | 2,088 |
+| Net revenue | ₹1,135,628.80 | ₹1,135,628.80 |
+| Gross margin | ₹260,999.43 | ₹260,999.43 |
+| Reconciliation rows | 156 | 156 |
+| Rejected rows | 138 (etl_quarantine) | 138 (stg_rejections) |
+
+They match because both pipelines implement the **same rule set with the same names** (`quality.py` ↔ `stg_*.sql`), the same dedupe survivors (first `order_id`; *last* `customer_id`; non-"(old)" product), the same canonical mappings and the same "DELIVERED only" revenue definition. The one time they *didn't* match was deliberate: after loading the increment into ELT only, `compare_with_etl` printed `*** MISMATCH ***` (ELT Sept ₹1,131,435.10 vs ETL ₹1,135,628.80) — exactly the 10 orders returned on 1 Oct. Feeding the same file to ETL (`updated=10 inserted=150`) made them agree again. That is the expected, explainable difference: *the two warehouses only match when they have consumed the same files.*
+
+**Where ETL and ELT differ structurally (visible in the warehouse)**
+- ELT keeps the bad rows: `stg_orders` has 2,400 rows = 2,310 PASSED + 90 FAILED survivors (12 duplicates exist only in `stg_rejections`). ETL's fact table has 2,310 — the bad rows live in files/`etl_quarantine`.
+- ELT raw tables grow on every run (by design; audit/replay); ETL's intermediate files are per-run and disposable.
+- In ELT a rule change is a SQL edit + re-run of staging over the already-loaded raw; in ETL it needs the source files re-read.
+
+**Run it**
+```bash
+astro dev run dags test nammamart_elt_hosur_narahari
+astro dev run dags test nammamart_elt_hosur_narahari --conf '{"increment_file": "orders_2026-10-01_increment.csv"}'
+.venv/bin/python scripts/wh.py "select * from mart_payment_mode_revenue"
+.venv/bin/python scripts/wh.py "select order_id, order_status, _source_file from raw_orders where order_id='ORD000017'"   # history
+```
