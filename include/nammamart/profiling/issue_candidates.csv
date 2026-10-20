@@ -1,45 +1,45 @@
-file,row_key,column,problem,dimension,rows,example
-orders.csv,ORD000362,order_ts,1 null/blank values,Completeness,1,
-orders.csv,"ORD002255,ORD000701,ORD000997",customer_id,18 null/blank values,Completeness,18,
-orders.csv,"ORD000682,ORD000910,ORD001683",delivery_minutes,164 null/blank values,Completeness,164,
-orders.csv,"ORD002356,ORD001874",payment_mode,2 values with leading/trailing whitespace,Validity,2,UPI 
-orders.csv,"ORD001462,ORD001441,ORD001692,ORD002129,ORD001239",order_id,"12 keys appear more than once (24 exact dupes, 0 differing)",Uniqueness,24,
-orders.csv,"ORD000403,ORD001610,ORD000534",order_ts,5 unparseable timestamps,Validity,5,"['N/A', '2026-13-05 11:00:00', '2026-13-05 11:00:00']"
-orders.csv,"ORD002119,ORD001693,ORD001089",order_ts,7 future-dated values (> 2026-10-20),Timeliness,7,"['2027-01-01 09:00:00', '2026-10-21 10:15:00', '2026-10-21 10:15:00']"
-orders.csv,"ORD000403,ORD002012,ORD000946",order_ts,"3 values in non-standard date format ['99/99/9999 99:99', 'N/A']",Validity,3,"['N/A', '31/09/2026 10:00', '31/09/2026 10:00']"
-payments.csv,"PAY0000133,PAY0001514,PAY0001852",gateway_ref,301 null/blank values,Completeness,301,
-payments.csv,"PAY0002113,PAY0001862",payment_mode,2 values with leading/trailing whitespace,Validity,2,UPI 
-payments.csv,"PAY0000509,PAY0001651,PAY0002000,PAY0000755",payment_id,"4 keys appear more than once (8 exact dupes, 0 differing)",Uniqueness,8,
-payments.csv,"PAY0000396,PAY0000127,PAY0001908",payment_ts,7 future-dated values (> 2026-10-20),Timeliness,7,"['2026-11-02 18:40:52', '2027-01-01 09:01:37', '2027-01-01 09:01:46']"
-customers.csv,"C00355,C00394,C00233",city,6 null/blank values,Completeness,6,
-customers.csv,"C00103,C00252,C00226,C00036,C00313",customer_id,"5 keys appear more than once (0 exact dupes, 10 differing)",Uniqueness,10,
-customers.csv,"C00132,C00083,C00166",pincode,3 non-numeric values,Validity,3,"['5600XX', '5600XX', '5600XX']"
-customers.csv,"C00400,C00398,C00038",signup_date,3 future-dated values (> 2026-10-20),Timeliness,3,"['2027-01-05', '2026-11-12', '2026-12-20']"
-products.csv,"P0051,P0060,P0068",category,3 null/blank values,Completeness,3,
-products.csv,"P0030,P0140",product_id,"2 keys appear more than once (0 exact dupes, 4 differing)",Uniqueness,4,
-stores.csv,S07,zone,1 null/blank values,Completeness,1,
-orders.csv,"ORD002255,ORD000701,ORD000997,ORD000580,ORD002019",customer_id,18 rows reference a customer_id that does not exist in the master,Consistency,18,['']
-orders.csv,"ORD000986,ORD001058,ORD001685,ORD000070,ORD000789",product_id,9 rows reference a product_id that does not exist in the master,Consistency,9,"['P9455', 'P9212', 'P9816']"
-orders.csv,"ORD001799,ORD001046,ORD001492,ORD001275,ORD002126",store_id,5 rows reference a store_id that does not exist in the master,Consistency,5,"['S99', 'S17', 'S00']"
-payments.csv,"PAY0002219,PAY0002220,PAY0002223,PAY0002221,PAY0002224",order_id,8 rows reference a order_id that does not exist in the master,Consistency,8,"['ORD970544', 'ORD968496', 'ORD988106']"
-orders.csv / payments.csv,"ORD001113,ORD000737,ORD001398,ORD002078,ORD001570",order_id,27 DELIVERED orders have no payment row,Consistency,27,
-payments.csv,"ORD000094,ORD000188,ORD000513,ORD002122",order_id,4 orders have more than one payment row,Uniqueness,8,
-orders.csv,"ORD002103,ORD002305,ORD002004,ORD000845,ORD000964",order_amount,18 rows where order_amount does not match the formula,Accuracy,18,492.0 vs expected -738.0
-orders.csv,"ORD001066,ORD000500,ORD000153,ORD001970,ORD001637",order_status,"5 rows with status outside allowed list (casing/whitespace/unknown): ['delivered', 'Pending??']",Validity,5,
-orders.csv,"ORD001812,ORD001414,ORD000159,ORD001364,ORD000433",payment_mode,"10 rows with payment_mode outside allowed list: ['Cashh', 'upi', 'CARD', 'UPI ', 'cod']",Validity,10,
-orders.csv,"ORD000469,ORD001296,ORD001459,ORD000867,ORD000462",quantity,10 rows with quantity <= 0,Accuracy,10,"['0', '-2', '-3', '-1', '-3']"
-orders.csv,"ORD001296,ORD001459,ORD000867,ORD000462,ORD001124",order_amount,6 rows with negative order_amount,Accuracy,6,
-orders.csv,"ORD002103,ORD001468,ORD001237",discount_pct,3 rows with discount outside 0–100,Validity,3,
-orders.csv,"ORD001554,ORD001800,ORD000731,ORD001277,ORD000326",delivery_minutes,8 DELIVERED orders missing delivery_minutes,Completeness,8,
-orders.csv,"ORD001037,ORD002101,ORD000455,ORD001104,ORD000020",delivery_minutes,6 rows with delivery_minutes > 120 (impossible for 10-min promise),Accuracy,6,"['480', '480', '1440', '900', '900']"
-payments.csv,"PAY0002188,PAY0001850,PAY0001954,PAY0000817,PAY0001359",payment_mode,"10 rows with payment_mode outside allowed list: ['upi', 'cod', 'CARD', 'UPI ', 'Cashh']",Validity,10,
-payments.csv,"PAY0001568,PAY0002175,PAY0000116,PAY0000751,PAY0000944",amount_paid,10 rows with amount_paid <= 0,Accuracy,10,
-payments.csv,"PAY0001568,PAY0000354,PAY0000779,PAY0000323,PAY0001167",amount_paid,14 SUCCESS payments do not equal order_amount,Consistency,14,-43.05 vs order 56.95
-customers.csv,"C00337,C00307,C00063,C00045,C00363",email,12 malformed emails,Validity,12,"['N/A', 'arjun.rao307example.com']"
-customers.csv,"C00151,C00240,C00095,C00357,C00130",phone,7 phones not 10 digits,Validity,7,"['996292312', '90917798']"
-customers.csv,"C00132,C00395,C00083,C00342,C00166",pincode,5 invalid pincodes,Validity,5,"['5600XX', '000000']"
-customers.csv,"C00199,C00171,C00133,C00032,C00031",loyalty_tier,"8 rows with inconsistent casing/whitespace (['BRONZE', 'bronze', 'SILVER'])",Consistency,8,
-customers.csv,"C00337,C00103,C00103,C00045,C00252",email,14 rows share an email with another row,Uniqueness,14,
-customers.csv,"C00038,C00398,C00400",signup_date,3 customers signed up after their first order,Consistency,3,
-products.csv,P0109,mrp,1 products with mrp <= 0,Accuracy,1,['-203.0']
-products.csv,"P0019,P0073,P0074,P0109,P0117",cost_price,5 products where cost_price > mrp (negative margin),Accuracy,5,mrp 220.0 cost 264.0
+file                     , row_key                                                 , column          , problem                                                                                          , dimension   , rows, example
+orders.csv               , ORD000362                                               , order_ts        , 1 null/blank values                                                                              , Completeness,    1, 
+orders.csv               , "ORD002255,ORD000701,ORD000997"                         , customer_id     , 18 null/blank values                                                                             , Completeness,   18, 
+orders.csv               , "ORD000682,ORD000910,ORD001683"                         , delivery_minutes, 164 null/blank values                                                                            , Completeness,  164, 
+orders.csv               , "ORD002356,ORD001874"                                   , payment_mode    , 2 values with leading/trailing whitespace                                                        , Validity    ,    2, UPI
+orders.csv               , "ORD001462,ORD001441,ORD001692,ORD002129,ORD001239"     , order_id        , "12 keys appear more than once (24 exact dupes, 0 differing)"                                    , Uniqueness  ,   24, 
+orders.csv               , "ORD000403,ORD001610,ORD000534"                         , order_ts        , 5 unparseable timestamps                                                                         , Validity    ,    5, "['N/A', '2026-13-05 11:00:00', '2026-13-05 11:00:00']"
+orders.csv               , "ORD002119,ORD001693,ORD001089"                         , order_ts        , 7 future-dated values (> 2026-10-20)                                                             , Timeliness  ,    7, "['2027-01-01 09:00:00', '2026-10-21 10:15:00', '2026-10-21 10:15:00']"
+orders.csv               , "ORD000403,ORD002012,ORD000946"                         , order_ts        , "3 values in non-standard date format ['99/99/9999 99:99', 'N/A']"                               , Validity    ,    3, "['N/A', '31/09/2026 10:00', '31/09/2026 10:00']"
+payments.csv             , "PAY0000133,PAY0001514,PAY0001852"                      , gateway_ref     , 301 null/blank values                                                                            , Completeness,  301, 
+payments.csv             , "PAY0002113,PAY0001862"                                 , payment_mode    , 2 values with leading/trailing whitespace                                                        , Validity    ,    2, UPI
+payments.csv             , "PAY0000509,PAY0001651,PAY0002000,PAY0000755"           , payment_id      , "4 keys appear more than once (8 exact dupes, 0 differing)"                                      , Uniqueness  ,    8, 
+payments.csv             , "PAY0000396,PAY0000127,PAY0001908"                      , payment_ts      , 7 future-dated values (> 2026-10-20)                                                             , Timeliness  ,    7, "['2026-11-02 18:40:52', '2027-01-01 09:01:37', '2027-01-01 09:01:46']"
+customers.csv            , "C00355,C00394,C00233"                                  , city            , 6 null/blank values                                                                              , Completeness,    6, 
+customers.csv            , "C00103,C00252,C00226,C00036,C00313"                    , customer_id     , "5 keys appear more than once (0 exact dupes, 10 differing)"                                     , Uniqueness  ,   10, 
+customers.csv            , "C00132,C00083,C00166"                                  , pincode         , 3 non-numeric values                                                                             , Validity    ,    3, "['5600XX', '5600XX', '5600XX']"
+customers.csv            , "C00400,C00398,C00038"                                  , signup_date     , 3 future-dated values (> 2026-10-20)                                                             , Timeliness  ,    3, "['2027-01-05', '2026-11-12', '2026-12-20']"
+products.csv             , "P0051,P0060,P0068"                                     , category        , 3 null/blank values                                                                              , Completeness,    3, 
+products.csv             , "P0030,P0140"                                           , product_id      , "2 keys appear more than once (0 exact dupes, 4 differing)"                                      , Uniqueness  ,    4, 
+stores.csv               , S07                                                     , zone            , 1 null/blank values                                                                              , Completeness,    1, 
+orders.csv               , "ORD002255,ORD000701,ORD000997,ORD000580,ORD002019"     , customer_id     , 18 rows reference a customer_id that does not exist in the master                                , Consistency ,   18, ['']
+orders.csv               , "ORD000986,ORD001058,ORD001685,ORD000070,ORD000789"     , product_id      , 9 rows reference a product_id that does not exist in the master                                  , Consistency ,    9, "['P9455', 'P9212', 'P9816']"
+orders.csv               , "ORD001799,ORD001046,ORD001492,ORD001275,ORD002126"     , store_id        , 5 rows reference a store_id that does not exist in the master                                    , Consistency ,    5, "['S99', 'S17', 'S00']"
+payments.csv             , "PAY0002219,PAY0002220,PAY0002223,PAY0002221,PAY0002224", order_id        , 8 rows reference a order_id that does not exist in the master                                    , Consistency ,    8, "['ORD970544', 'ORD968496', 'ORD988106']"
+orders.csv / payments.csv, "ORD001113,ORD000737,ORD001398,ORD002078,ORD001570"     , order_id        , 27 DELIVERED orders have no payment row                                                          , Consistency ,   27, 
+payments.csv             , "ORD000094,ORD000188,ORD000513,ORD002122"               , order_id        , 4 orders have more than one payment row                                                          , Uniqueness  ,    8, 
+orders.csv               , "ORD002103,ORD002305,ORD002004,ORD000845,ORD000964"     , order_amount    , 18 rows where order_amount does not match the formula                                            , Accuracy    ,   18, 492.0 vs expected -738.0
+orders.csv               , "ORD001066,ORD000500,ORD000153,ORD001970,ORD001637"     , order_status    , "5 rows with status outside allowed list (casing/whitespace/unknown): ['delivered', 'Pending??']", Validity    ,    5, 
+orders.csv               , "ORD001812,ORD001414,ORD000159,ORD001364,ORD000433"     , payment_mode    , "10 rows with payment_mode outside allowed list: ['Cashh', 'upi', 'CARD', 'UPI ', 'cod']"        , Validity    ,   10, 
+orders.csv               , "ORD000469,ORD001296,ORD001459,ORD000867,ORD000462"     , quantity        , 10 rows with quantity <= 0                                                                       , Accuracy    ,   10, "['0', '-2', '-3', '-1', '-3']"
+orders.csv               , "ORD001296,ORD001459,ORD000867,ORD000462,ORD001124"     , order_amount    , 6 rows with negative order_amount                                                                , Accuracy    ,    6, 
+orders.csv               , "ORD002103,ORD001468,ORD001237"                         , discount_pct    , 3 rows with discount outside 0–100                                                               , Validity    ,    3, 
+orders.csv               , "ORD001554,ORD001800,ORD000731,ORD001277,ORD000326"     , delivery_minutes, 8 DELIVERED orders missing delivery_minutes                                                      , Completeness,    8, 
+orders.csv               , "ORD001037,ORD002101,ORD000455,ORD001104,ORD000020"     , delivery_minutes, 6 rows with delivery_minutes > 120 (impossible for 10-min promise)                               , Accuracy    ,    6, "['480', '480', '1440', '900', '900']"
+payments.csv             , "PAY0002188,PAY0001850,PAY0001954,PAY0000817,PAY0001359", payment_mode    , "10 rows with payment_mode outside allowed list: ['upi', 'cod', 'CARD', 'UPI ', 'Cashh']"        , Validity    ,   10, 
+payments.csv             , "PAY0001568,PAY0002175,PAY0000116,PAY0000751,PAY0000944", amount_paid     , 10 rows with amount_paid <= 0                                                                    , Accuracy    ,   10, 
+payments.csv             , "PAY0001568,PAY0000354,PAY0000779,PAY0000323,PAY0001167", amount_paid     , 14 SUCCESS payments do not equal order_amount                                                    , Consistency ,   14, -43.05 vs order 56.95
+customers.csv            , "C00337,C00307,C00063,C00045,C00363"                    , email           , 12 malformed emails                                                                              , Validity    ,   12, "['N/A', 'arjun.rao307example.com']"
+customers.csv            , "C00151,C00240,C00095,C00357,C00130"                    , phone           , 7 phones not 10 digits                                                                           , Validity    ,    7, "['996292312', '90917798']"
+customers.csv            , "C00132,C00395,C00083,C00342,C00166"                    , pincode         , 5 invalid pincodes                                                                               , Validity    ,    5, "['5600XX', '000000']"
+customers.csv            , "C00199,C00171,C00133,C00032,C00031"                    , loyalty_tier    , "8 rows with inconsistent casing/whitespace (['BRONZE', 'bronze', 'SILVER'])"                    , Consistency ,    8, 
+customers.csv            , "C00337,C00103,C00103,C00045,C00252"                    , email           , 14 rows share an email with another row                                                          , Uniqueness  ,   14, 
+customers.csv            , "C00038,C00398,C00400"                                  , signup_date     , 3 customers signed up after their first order                                                    , Consistency ,    3, 
+products.csv             , P0109                                                   , mrp             , 1 products with mrp <= 0                                                                         , Accuracy    ,    1, ['-203.0']
+products.csv             , "P0019,P0073,P0074,P0109,P0117"                         , cost_price      , 5 products where cost_price > mrp (negative margin)                                              , Accuracy    ,    5, mrp 220.0 cost 264.0

@@ -18,14 +18,21 @@
 - Write-up: `SUBMISSION.md`
 
 ## Parts
-- [x] **Part 0** — Discovery & data profiling → Data Issues Log (39 issues, all 6 files) + 3 client questions. Artifacts: `SUBMISSION.md` §Part 0, `include/nammamart/profiling/{profile_data.py,profile_report.md,issue_candidates.csv}`. **Awaiting user review.**
-- [ ] **Part A** — ETL DAG (Extract → Validate → Quarantine → Transform → Load star schema → Reconcile → Report)
+- [x] **Part 0** — Discovery & data profiling → Data Issues Log (39 issues, all 6 files) + 3 client questions. Artifacts: `SUBMISSION.md` §Part 0, `include/nammamart/profiling/{profile_data.py,profile_report.md,issue_candidates.csv}`. Approved.
+- [x] **Part A** — ETL DAG `dags/nammamart_etl_hosur_narahari.py` + helpers `include/nammamart/{config,quality,standardise,masking,warehouse,etl_steps}.py`. Verified: parses, green run in UI, idempotent (re-run → 0 inserts), increment via `--conf '{"orders_file": "orders_2026-10-01_increment.csv"}'` → updated=10 inserted=150. **Awaiting user review.**
 - [ ] **Part B** — ELT DAG (Raw → Staging → Mart, SQL files, MERGE incremental)
 - [ ] **Part C** — Schedule both at 9:00 AM IST Mon–Sat (cron, pendulum tz, catchup, retries) + answers
 - [ ] **Part D** — DQ checks across 6 dimensions in both pipelines, `dq_results` table
 - [ ] **Part E** — Governance answers (9 questions)
 - [ ] **Part F** — `pipeline_runs` audit + 10 observability experiments + 5 pillars
 - [ ] **Part G** — One-page recommendation to CTO
+
+## Environment workaround (corporate TLS proxy)
+- Laptop runs Cato Networks TLS inspection → Astro image build fails on PyPI TLS. Fix: `scripts/astro_corp.sh start|restart|stop`
+  builds `astro-runtime-corp-ca:3.3-2` (runtime + Cato CA from keychain, certs in git-ignored `.certs/`) then `nammamart-airflow:latest`,
+  and starts astro with `--image-name nammamart-airflow:latest`. Trainer's `Dockerfile` untouched. Rebuild needed only when requirements.txt changes.
+- Airflow 3.3.0 / Python 3.14 in the image → use `from airflow.sdk import dag, task, get_current_context`.
+- Astro UI URL printed by `astro dev start` (reverse proxy, e.g. http://iit-roorkie-cec-futurenece-data-pipeline-to-ml-model.localhost:6563), admin/admin.
 
 ## Notes / decisions
 - Part 0 key findings that drive the pipeline design:
@@ -35,3 +42,12 @@
   - products: P0030/P0140 dup with "(old)" rows, 3 blank category, P0109 mrp=-203, 5 cost>mrp
   - stores: S07 blank zone, S12 capacity 0
   - increment: clean; 150 new + 10 DELIVERED→RETURNED corrections
+- Part A design decisions:
+  - Dimension *attribute* defects (blank category, mrp<=0, future signup_date, blank zone) are Warning, not Critical — otherwise ~70 valid orders cascade into quarantine for a master-data gap. Category→'Unknown', zone→'Unknown'.
+  - Orders FK: `*_in_master` = id absent from raw master (Critical); `*_row_quarantined` = id exists but master row failed Critical (Critical, explicit reason).
+  - Payments FK compares to raw orders ∪ orders already in warehouse (fact + quarantine) so incremental runs don't mis-quarantine payments.
+  - Fact load = delete-by-order_id + insert (idempotent + handles status corrections). Dims = full replace. etl_payments upserted on payment_id.
+  - Quarantine: file per source per run (`include/quarantine/hosur_narahari/<file>_failed_<run_id>.csv`, rows as received + failure_reason) AND table `etl_quarantine` (raw_row JSON).
+  - Intermediate data in `include/work/hosur_narahari/<run_id>/` (git-ignored); XCom carries only paths/counts.
+  - Base-state totals (orders.csv only): fact 2310 rows, 2088 delivered, net revenue 1,135,628.80, gross margin 260,999.43; 138 quarantined (102 orders, 29 payments, 5 customers, 2 products); 156 reconciliation mismatches.
+  - After increment: fact 2460, Sept revenue 1,131,435.10 (10 returns), Oct 79,652.20.

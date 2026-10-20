@@ -13,3 +13,11 @@ airflow.db
 .astro/*.local.yml
 .astro/*.local.yaml
 test_api.py 
+
+# NammaMart assignment run artifacts
+include/work/
+include/warehouse_hosur_narahari.duckdb*
+include/quarantine/hosur_narahari/*local__*
+
+# corporate CA material for local docker builds (machine specific)
+.certs/
