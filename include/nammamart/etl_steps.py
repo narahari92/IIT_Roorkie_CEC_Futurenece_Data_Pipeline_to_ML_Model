@@ -10,6 +10,7 @@ inspectable, and keeps XCom payloads tiny).
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -228,10 +229,13 @@ def transform(orders_v: dict, cust_v: dict, prod_v: dict, store_v: dict, run_id:
     o["within_15_min"] = (o["delivery_minutes"] <= C.SLA_MINUTES).where(delivered & o["delivery_minutes"].notna())
     o["loaded_at"] = pd.Timestamp(_now().naive())
     o["run_id"] = run_id
+    o["effective_date"] = pd.Series([effective_date(orders_v["source_file"])] * len(o), index=o.index, dtype="object")
+    o["effective_date"] = pd.to_datetime(o["effective_date"]).dt.date
 
     fact = o[["order_id", "order_ts", "order_date", "customer_id", "store_id", "product_id", "quantity", "unit_price",
               "discount_pct", "order_amount", "payment_mode", "order_status", "channel", "delivery_minutes",
-              "is_delivered", "net_revenue", "cogs", "gross_margin", "within_15_min", "dq_warnings", "loaded_at", "run_id"]]
+              "is_delivered", "net_revenue", "cogs", "gross_margin", "within_15_min", "dq_warnings", "loaded_at", "run_id",
+              "effective_date"]]
 
     paths = {}
     for name, df in [("fact_orders", fact), ("dim_customer", dim_customer), ("dim_product", dim_product), ("dim_store", dim_store)]:
@@ -242,6 +246,14 @@ def transform(orders_v: dict, cust_v: dict, prod_v: dict, store_v: dict, run_id:
     print(f"[Transform] fact totals — delivered={int(delivered.sum())} net_revenue={fact['net_revenue'].sum():,.2f} "
           f"gross_margin={fact['gross_margin'].sum():,.2f}")
     return {"paths": paths, "fact_rows": len(fact)}
+
+
+def effective_date(source_file: str, _order_ts: pd.Series = None):
+    """'As-of' date of a batch = the date in the file name (orders_2026-10-01_increment.csv →
+    2026-10-01), else None. Deliberately NOT derived from the data: junk future timestamps
+    would make a stale snapshot look newer than a real correction."""
+    m = re.search(r"(\d{4}-\d{2}-\d{2})", source_file)
+    return pd.Timestamp(m.group(1)).date() if m else None
 
 
 # ───────────────────────────── LOAD ─────────────────────────────
@@ -278,7 +290,7 @@ def load(transformed: dict, payments_v: dict, run_id: str, validated: list[dict]
     with W.connect() as con:
         for dim in ["dim_customer", "dim_product", "dim_store"]:
             W.replace_table(con, f"etl_{dim}", pd.read_parquet(transformed["paths"][dim]))
-        fact_stats = W.upsert(con, "etl_fact_orders", fact, "order_id")
+        fact_stats = W.upsert_guarded(con, "etl_fact_orders", fact, "order_id", W.ORDER_UPSERT_GUARD)
         pay_stats = W.upsert(con, "etl_payments", payments, "payment_id")
         if validated is not None:
             q = _quarantine_table(validated, run_id)
@@ -291,7 +303,8 @@ def load(transformed: dict, payments_v: dict, run_id: str, validated: list[dict]
         counts = {t: con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
                   for t in ["etl_fact_orders", "etl_dim_customer", "etl_dim_product", "etl_dim_store", "etl_payments", "etl_quarantine"]}
     print(f"[Load] etl_fact_orders: before={fact_stats['before']} updated={fact_stats['updated']} "
-          f"inserted={fact_stats['inserted']} after={fact_stats['after']}")
+          f"inserted={fact_stats['inserted']} skipped_guarded={fact_stats['skipped_guarded']} after={fact_stats['after']} "
+          f"(batch effective_date={fact['effective_date'].iloc[0] if len(fact) else None})")
     print(f"[Load] etl_payments:    before={pay_stats['before']} updated={pay_stats['updated']} "
           f"inserted={pay_stats['inserted']} after={pay_stats['after']}")
     print(f"[Load] table counts: {counts}")

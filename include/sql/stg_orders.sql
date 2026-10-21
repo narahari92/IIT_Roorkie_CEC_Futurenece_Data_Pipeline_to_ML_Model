@@ -113,18 +113,24 @@ CREATE TABLE IF NOT EXISTS stg_orders (
     quantity INTEGER, unit_price DOUBLE, discount_pct DOUBLE, order_amount DOUBLE, payment_mode VARCHAR,
     order_status VARCHAR, channel VARCHAR, delivery_minutes INTEGER,
     dq_status VARCHAR, failure_reason VARCHAR, dq_warnings VARCHAR,
-    _source_file VARCHAR, _run_id VARCHAR, _row_num BIGINT, _staged_at TIMESTAMP);
+    _source_file VARCHAR, _run_id VARCHAR, _row_num BIGINT, _staged_at TIMESTAMP, _effective_date DATE);
 
 -- ★ The MERGE: corrections overwrite, new orders insert, duplicates never land.
+--   Guard against a stale snapshot undoing a later correction:
+--     (a) business rule — a terminal status (RETURNED/CANCELLED) is never regressed to DELIVERED;
+--     (b) if both files carry a date in their name, an older file never overwrites a newer one.
+--   _effective_date = date in the file name (orders_2026-10-01_increment.csv → 2026-10-01), else NULL.
 MERGE INTO stg_orders t
 USING (
     SELECT order_id, order_ts, CAST(order_ts AS DATE) AS order_date, customer_id, store_id, product_id,
            quantity, unit_price, discount_pct, order_amount, payment_mode, order_status, channel, delivery_minutes,
            dq_status, NULLIF(failure_reason, '') AS failure_reason, dq_warnings,
-           _source_file, _run_id, _row_num, TIMESTAMP '$now' AS _staged_at
+           _source_file, _run_id, _row_num, TIMESTAMP '$now' AS _staged_at,
+           try_cast(NULLIF(regexp_extract('$source_file', '(\d{4}-\d{2}-\d{2})', 1), '') AS DATE) AS _effective_date
     FROM _batch WHERE order_id IS NOT NULL AND NOT f_order_id_unique
 ) s ON t.order_id = s.order_id
-WHEN MATCHED THEN UPDATE
+WHEN MATCHED AND NOT (t.order_status IN ('RETURNED', 'CANCELLED') AND s.order_status NOT IN ('RETURNED', 'CANCELLED'))
+             AND coalesce(s._effective_date >= t._effective_date, TRUE) THEN UPDATE
 WHEN NOT MATCHED THEN INSERT;
 
 DELETE FROM dq_results WHERE run_id = '$run_id' AND dag_id = '$dag_id' AND check_name LIKE '$label.%';

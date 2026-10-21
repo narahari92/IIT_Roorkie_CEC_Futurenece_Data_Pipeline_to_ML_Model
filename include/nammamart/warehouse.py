@@ -81,6 +81,30 @@ def upsert(con, table: str, df: pd.DataFrame, key: str) -> dict:
     return {"before": before, "updated": updated, "inserted": len(df) - updated, "after": after}
 
 
+ORDER_UPSERT_GUARD = """
+    NOT (t.order_status IN ('RETURNED', 'CANCELLED') AND s.order_status NOT IN ('RETURNED', 'CANCELLED'))
+    AND coalesce(s.effective_date >= t.effective_date, TRUE)"""
+
+
+def upsert_guarded(con, table: str, df: pd.DataFrame, key: str, guard: str) -> dict:
+    """Like upsert(), but an existing row (alias t) is only replaced by the incoming row
+    (alias s) when `guard` is TRUE. Used so a stale full snapshot can never undo a later
+    correction (e.g. RETURNED back to DELIVERED). Returns inserted/updated/skipped counts."""
+    con.register("_df", df)
+    con.execute(f"CREATE TABLE IF NOT EXISTS {table} AS SELECT * FROM _df WHERE 1=0")
+    before = con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+    skipped = con.execute(f"SELECT COUNT(*) FROM {table} t JOIN _df s USING ({key}) WHERE NOT ({guard})").fetchone()[0]
+    updated = con.execute(f"SELECT COUNT(*) FROM {table} t JOIN _df s USING ({key}) WHERE ({guard})").fetchone()[0]
+    con.execute(f"""DELETE FROM {table} WHERE {key} IN (
+                    SELECT t.{key} FROM {table} t JOIN _df s USING ({key}) WHERE ({guard}))""")
+    con.execute(f"""INSERT INTO {table} BY NAME
+                    SELECT * FROM _df s WHERE s.{key} NOT IN (SELECT {key} FROM {table})""")
+    after = con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+    con.unregister("_df")
+    return {"before": before, "updated": updated, "inserted": len(df) - updated - skipped,
+            "skipped_guarded": skipped, "after": after}
+
+
 def write_dq_results(con, run_id: str, dag_id: str, results: list[dict], checked_at):
     con.execute(DQ_RESULTS_DDL)
     # idempotent per run: a re-run of the same run_id (task Clear) replaces its rows
