@@ -23,8 +23,8 @@
 - [x] **Part B** — ELT DAG `dags/nammamart_elt_hosur_narahari.py` + `include/nammamart/elt_steps.py` + 14 SQL files in `include/sql/` (raw_load, stg_common_ddl, stg_×5, mart_×7). Verified: green run, raw append-only, staging MERGE (+150/10 updated), marts match ETL exactly (Sept 2088 / 1,135,628.80 / 260,999.43). Increment via `--conf '{"increment_file": "orders_2026-10-01_increment.csv"}'`. **Awaiting user review.**
 - [x] **Part C** — Both DAGs: `schedule="0 9 * * 1-6"`, `start_date=pendulum.datetime(2026,10,1,tz="Asia/Kolkata")`, `catchup=False`, `dagrun_timeout=20m`, default_args retries=2/1min/execution_timeout=10m. Verified next_dagrun = 2026-10-21 03:30 UTC; one catch-up run each; concurrent runs OK (8 lock waits, 0 failures). Answers in SUBMISSION.md §Part C. Approved. (Real 09:00 IST run fired 2026-10-21 for both DAGs.)
 - [x] **Part D** — 72 checks/pipeline (43 Critical, 29 Warning), every dimension × every file in both ETL (quality.py) and ELT (stg_*.sql), identical names, parity 72/72. `dq_results` written every run by both. `scripts/dq_scorecard.py` = coverage/parity/failures/trend. Catalogue + justification in SUBMISSION.md §Part D. Approved.
-- [x] **Part E** — 9 governance answers + data dictionary in SUBMISSION.md §Part E, with real traces (lineage: mart S04/2026-09-01 ₹1103.30 → ORD000052 orders.csv line 2076 + P0068 products.csv row 68; audit: ORD001296). Side-fix: stale-snapshot guard in both pipelines. **Awaiting user review.**
-- [ ] **Part F** — `pipeline_runs` audit + 10 observability experiments + 5 pillars
+- [x] **Part E** — 9 governance answers + data dictionary in SUBMISSION.md §Part E, with real traces (lineage: mart S04/2026-09-01 ₹1103.30 → ORD000052 orders.csv line 2076 + P0068 products.csv row 68; audit: ORD001296). Side-fix: stale-snapshot guard in both pipelines. Approved.
+- [x] **Part F** — `run_audit` task (all_done) in both DAGs → `pipeline_runs` + `pipeline_run_metrics`, Slack/log alerts (Variable), on_failure_callback; 10 experiments run on both DAGs via `scripts/experiment.sh` + fixtures from `scripts/make_experiment_files.py`; results table + pillars in SUBMISSION.md §Part F; bonus trend chart `docs/dq_trend.svg`. **Awaiting user review.**
 - [ ] **Part G** — One-page recommendation to CTO
 
 ## Environment workaround (corporate TLS proxy)
@@ -60,6 +60,12 @@
   - `compare_with_etl` final task prints Sept totals of both pipelines and `match` flag.
   - Reserved words bit me: `name`/`rows` can't be bare aliases in DuckDB.
   - `increment_file` Param is nullable (`type=["null","string"]`) so the UI trigger form accepts empty.
+- Part F notes:
+  - Defects found by experiments and fixed: (a) ELT run showed `success` with failed tasks (only leaf = run_audit) → run_audit raises AirflowFailException after writing its row; (b) drift (×100 price, consistent amounts) loaded with only Warnings → run-over-run VOLUME (−90%) and DISTRIBUTION (±50% avg order amount) checks in run_audit with alert, metrics in `pipeline_run_metrics`.
+  - `ti.get_task_states(dag_id, run_ids, task_ids)` works in Airflow 3 SDK; `ctx["dag_run"].start_date` available.
+  - Clear via REST: POST /auth/token (admin/admin) then POST /api/v2/dags/{dag}/clearTaskInstances {dag_run_id, task_ids, include_downstream}.
+  - Task logs: /usr/local/airflow/logs/dag_id=<dag>/run_id=<run_id verbatim>/task_id=<t>/attempt=N.log (JSON lines).
+  - Warehouse left at base+increment state after Part F: 2462 rows / ₹1,212,267.10 both pipelines; raw_orders has grown (append-only) — expected.
 - Part E notes:
   - Defect found & fixed: a re-load of orders.csv after the increment reverted the 10 RETURNED orders to DELIVERED in both pipelines.
     Fix: ELT MERGE `WHEN MATCHED AND NOT (t terminal AND s not terminal) AND coalesce(s._effective_date >= t._effective_date, TRUE)`;

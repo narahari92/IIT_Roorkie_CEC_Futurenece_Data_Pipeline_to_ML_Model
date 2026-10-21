@@ -1,0 +1,2 @@
+order_id,order_ts,customer_id,store_id,product_id,quantity,unit_price,discount_pct,order_amount,payment_mode,order_status,channel,delivery_minutes,failure_reason,dq_warnings,quarantined_at,run_id
+ORD002255,2026-09-29 10:33:19,,S08,P0016,1,224.0,0,224.0,UPI,DELIVERED,App,33,orders.customer_id_not_null,,2026-10-21T12:23:49.411846+05:30,manual__2026-10-21T06:53:46.053163+00:00

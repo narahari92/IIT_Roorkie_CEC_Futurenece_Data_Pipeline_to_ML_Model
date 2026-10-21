@@ -29,11 +29,13 @@ import pendulum
 sys.path.insert(0, "/usr/local/airflow/include")
 
 from airflow.sdk import dag, task, get_current_context          # Airflow 3 public SDK
-from airflow.models.param import Param
+from airflow.sdk import Param
+from airflow.sdk.exceptions import AirflowFailException
 
 from nammamart import config as C
 from nammamart import etl_steps as S
 from nammamart import warehouse as W
+from nammamart import observability as O
 
 DAG_ID = f"nammamart_etl_{C.NAME}"
 
@@ -57,7 +59,11 @@ default_args = {
     "retries": 2,
     "retry_delay": timedelta(minutes=1),
     "execution_timeout": timedelta(minutes=10),
+    "on_failure_callback": O.on_task_failure,                # Slack alert (Variable SLACK_WEBHOOK_URL) or log
 }
+TASK_IDS = ["extract_orders", "extract_payments", "extract_customers", "extract_products", "extract_stores",
+            "validate_customers", "validate_products", "validate_stores", "validate_orders", "validate_payments",
+            "quarantine_summary", "write_dq_results", "transform", "load", "reconcile", "report", "run_audit"]
 
 
 def _run_id() -> str:
@@ -163,6 +169,23 @@ def nammamart_etl():
     def report(_reconciled: dict):
         return S.report(_run_id())
 
+    # ── RUN AUDIT: always runs, even when something upstream failed ──────────
+    @task(trigger_rule="all_done", retries=0)
+    def run_audit(extracted: list, validated: list, loaded: dict):
+        ctx = get_current_context()
+        result = O.write_run_audit(
+            ti=ctx["ti"], dag_id=DAG_ID, run_id=ctx["run_id"], all_task_ids=TASK_IDS,
+            extracted=[(e or {}).get("rows") for e in extracted],
+            loaded=(loaded or {}).get("rows_loaded"),
+            quarantined=[(v or {}).get("rows_failed") for v in validated],
+            start_time=ctx["dag_run"].start_date,
+            batch_metrics_sql="SELECT COUNT(*), AVG(order_amount), SUM(net_revenue) FROM etl_fact_orders WHERE run_id = ?")
+        if result["status"] == "FAILED":
+            # the audit row is written; now make the DAG run itself red so nobody mistakes a
+            # partially-failed run (whose only leaf is this task) for a good one
+            raise AirflowFailException(f"run audit recorded FAILED; failed tasks: {result['failed_tasks']}")
+        return result
+
     # ── WIRING ───────────────────────────────────────────────────────────────
     ex_orders = extract_orders()
     ex_payments = extract_payments()
@@ -183,7 +206,8 @@ def nammamart_etl():
     transformed = transform(v_orders, v_customers, v_products, v_stores)
     loaded = load(transformed, v_payments, validated)
     reconciled = reconcile(loaded)
-    report(reconciled)
+    reported = report(reconciled)
+    run_audit([ex_orders, ex_payments, ex_customers, ex_products, ex_stores], validated, loaded) << reported
 
 
 nammamart_etl()

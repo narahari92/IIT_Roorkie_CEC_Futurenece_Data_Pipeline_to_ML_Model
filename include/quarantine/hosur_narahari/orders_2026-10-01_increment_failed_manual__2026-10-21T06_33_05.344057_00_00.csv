@@ -1,0 +1,1 @@
+order_id,order_ts,customer_id,store_id,product_id,quantity,unit_price,discount_pct,order_amount,payment_mode,order_status,channel,delivery_minutes,failure_reason,dq_warnings,quarantined_at,run_id

@@ -30,11 +30,13 @@ import pendulum
 sys.path.insert(0, "/usr/local/airflow/include")
 
 from airflow.sdk import dag, task, get_current_context
-from airflow.exceptions import AirflowSkipException
-from airflow.models.param import Param
+from airflow.sdk.exceptions import AirflowSkipException
+from airflow.sdk import Param
+from airflow.sdk.exceptions import AirflowFailException
 
 from nammamart import config as C
 from nammamart import elt_steps as S
+from nammamart import observability as O
 
 DAG_ID = f"nammamart_elt_{C.NAME}"
 
@@ -58,7 +60,11 @@ default_args = {
     "retries": 2,
     "retry_delay": timedelta(minutes=1),
     "execution_timeout": timedelta(minutes=10),
+    "on_failure_callback": O.on_task_failure,                # Slack alert (Variable SLACK_WEBHOOK_URL) or log
 }
+TASK_IDS = ["raw_customers", "raw_products", "raw_stores", "raw_orders", "raw_payments",
+            "stg_customers", "stg_products", "stg_stores", "stg_orders", "stg_payments",
+            "raw_increment", "stg_merge_increment"] + S.MARTS + ["compare_with_etl", "run_audit"]
 
 
 def _run_id() -> str:
@@ -145,6 +151,24 @@ def nammamart_elt():
     def compare_with_etl(*_):
         return S.compare_with_etl()
 
+    # ── RUN AUDIT: always runs, even when something upstream failed ──────────
+    @task(trigger_rule="all_done", retries=0)
+    def run_audit(raws: list, staged: list, inc_stg: dict, _compared):
+        ctx = get_current_context()
+        staged = list(staged) + ([inc_stg] if inc_stg else [])
+        result = O.write_run_audit(
+            ti=ctx["ti"], dag_id=DAG_ID, run_id=ctx["run_id"], all_task_ids=TASK_IDS,
+            extracted=[(r or {}).get("rows_in") for r in raws],
+            loaded=sum((v or {}).get("rows_passed", 0) for v in staged if v) or None,
+            quarantined=[(v or {}).get("rows_failed") for v in staged],
+            start_time=ctx["dag_run"].start_date,
+            batch_metrics_sql="SELECT COUNT(*), AVG(order_amount), SUM(CASE WHEN order_status='DELIVERED' THEN order_amount END) FROM stg_orders WHERE _run_id = ? AND dq_status = 'PASSED'")
+        if result["status"] == "FAILED":
+            # the audit row is written; now make the DAG run itself red so nobody mistakes a
+            # partially-failed run (whose only leaf is this task) for a good one
+            raise AirflowFailException(f"run audit recorded FAILED; failed tasks: {result['failed_tasks']}")
+        return result
+
     # ── WIRING ───────────────────────────────────────────────────────────────
     c = stg_customers(raw["customers"], raw["orders"])
     p = stg_products(raw["products"])
@@ -157,7 +181,8 @@ def nammamart_elt():
     prev = inc_stg
     for name in S.MARTS:
         prev = _mart(name)(prev)
-    compare_with_etl(prev)
+    compared = compare_with_etl(prev)
+    run_audit(list(raw.values()), [c, p, s, o, pay], inc_stg, compared)
 
 
 nammamart_elt()

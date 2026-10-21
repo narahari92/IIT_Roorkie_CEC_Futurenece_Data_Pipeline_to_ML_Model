@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="360" font-family="Helvetica, Arial" font-size="11">
+<rect width="980" height="360" fill="white"/>
+<text x="60" y="18" font-size="14" font-weight="bold">NammaMart data-quality trend — rows failing per run (ETL DAG, from dq_results)</text>
+<line x1="60" y1="300" x2="960" y2="300" stroke="#999"/>
+<line x1="60" y1="30" x2="60" y2="300" stroke="#999"/>
+<text x="54" y="304.0" text-anchor="end" fill="#666">0</text>
+<line x1="60" y1="300.0" x2="960" y2="300.0" stroke="#eee"/>
+<text x="54" y="236.5" text-anchor="end" fill="#666">101</text>
+<line x1="60" y1="232.5" x2="960" y2="232.5" stroke="#eee"/>
+<text x="54" y="169.0" text-anchor="end" fill="#666">202</text>
+<line x1="60" y1="165.0" x2="960" y2="165.0" stroke="#eee"/>
+<text x="54" y="101.5" text-anchor="end" fill="#666">303</text>
+<line x1="60" y1="97.5" x2="960" y2="97.5" stroke="#eee"/>
+<text x="54" y="34.0" text-anchor="end" fill="#666">404</text>
+<line x1="60" y1="30.0" x2="960" y2="30.0" stroke="#eee"/>
+<path d="M 60.0,207.0 L 141.8,207.0 L 223.6,275.9 L 305.5,207.0 L 387.3,203.7 L 469.1,275.3 L 550.9,207.0 L 632.7,235.1 L 714.5,207.0 L 796.4,207.0 L 878.2,275.3 L 960.0,207.0" fill="none" stroke="#d62728" stroke-width="2"/>
+<path d="M 60.0,246.5 L 141.8,246.5 L 223.6,253.2 L 305.5,246.5 L 387.3,246.5 L 469.1,254.5 L 550.9,65.2 L 632.7,216.4 L 714.5,246.5 L 796.4,65.2 L 878.2,170.9 L 960.0,246.5" fill="none" stroke="#ff9900" stroke-width="2"/>
+<circle cx="60.0" cy="207.0" r="3.5" fill="#d62728"><title>manual__2026-10-21T06:30:46.497210+00:00
+Critical rows failed: 139</title></circle>
+<circle cx="60.0" cy="246.5" r="3.5" fill="#ff9900"><title>manual__2026-10-21T06:30:46.497210+00:00
+Warning rows failed: 80</title></circle>
+<text x="60.0" y="314" text-anchor="middle" fill="#666" font-size="9">21 12:00</text>
+<text x="60.0" y="326" text-anchor="middle" fill="#999" font-size="8">2412 in</text>
+<circle cx="141.8" cy="207.0" r="3.5" fill="#d62728"><title>manual__2026-10-21T06:31:56.264893+00:00
+Critical rows failed: 139</title></circle>
+<circle cx="141.8" cy="246.5" r="3.5" fill="#ff9900"><title>manual__2026-10-21T06:31:56.264893+00:00
+Warning rows failed: 80</title></circle>
+<text x="141.8" y="314" text-anchor="middle" fill="#666" font-size="9">21 12:02</text>
+<text x="141.8" y="326" text-anchor="middle" fill="#999" font-size="8">2412 in</text>
+<circle cx="223.6" cy="275.9" r="3.5" fill="#d62728"><title>manual__2026-10-21T06:33:05.344057+00:00
+Critical rows failed: 36</title></circle>
+<circle cx="223.6" cy="253.2" r="3.5" fill="#ff9900"><title>manual__2026-10-21T06:33:05.344057+00:00
+Warning rows failed: 70</title></circle>
+<text x="223.6" y="314" text-anchor="middle" fill="#666" font-size="9">21 12:03</text>
+<text x="223.6" y="326" text-anchor="middle" fill="#999" font-size="8">160 in</text>
+<circle cx="305.5" cy="207.0" r="3.5" fill="#d62728"><title>manual__2026-10-21T06:34:10.639990+00:00
+Critical rows failed: 139</title></circle>
+<circle cx="305.5" cy="246.5" r="3.5" fill="#ff9900"><title>manual__2026-10-21T06:34:10.639990+00:00
+Warning rows failed: 80</title></circle>
+<text x="305.5" y="314" text-anchor="middle" fill="#666" font-size="9">21 12:09</text>
+<text x="305.5" y="326" text-anchor="middle" fill="#999" font-size="8">2412 in</text>
+<circle cx="387.3" cy="203.7" r="3.5" fill="#d62728"><title>manual__2026-10-21T06:40:13.445428+00:00
+Critical rows failed: 144</title></circle>
+<circle cx="387.3" cy="246.5" r="3.5" fill="#ff9900"><title>manual__2026-10-21T06:40:13.445428+00:00
+Warning rows failed: 80</title></circle>
+<text x="387.3" y="314" text-anchor="middle" fill="#666" font-size="9">21 12:10</text>
+<text x="387.3" y="326" text-anchor="middle" fill="#999" font-size="8">2417 in</text>
+<circle cx="469.1" cy="275.3" r="3.5" fill="#d62728"><title>manual__2026-10-21T06:47:16.120446+00:00
+Critical rows failed: 37</title></circle>
+<circle cx="469.1" cy="254.5" r="3.5" fill="#ff9900"><title>manual__2026-10-21T06:47:16.120446+00:00
+Warning rows failed: 68</title></circle>
+<text x="469.1" y="314" text-anchor="middle" fill="#666" font-size="9">21 12:17</text>
+<text x="469.1" y="326" text-anchor="middle" fill="#999" font-size="8">50 in</text>
+<circle cx="550.9" cy="207.0" r="3.5" fill="#d62728"><title>manual__2026-10-21T06:48:25.932148+00:00
+Critical rows failed: 139</title></circle>
+<circle cx="550.9" cy="65.2" r="3.5" fill="#ff9900"><title>manual__2026-10-21T06:48:25.932148+00:00
+Warning rows failed: 351</title></circle>
+<text x="550.9" y="314" text-anchor="middle" fill="#666" font-size="9">21 12:18</text>
+<text x="550.9" y="326" text-anchor="middle" fill="#999" font-size="8">2412 in</text>
+<circle cx="632.7" cy="235.1" r="3.5" fill="#d62728"><title>manual__2026-10-21T06:49:40.623613+00:00
+Critical rows failed: 97</title></circle>
+<circle cx="632.7" cy="216.4" r="3.5" fill="#ff9900"><title>manual__2026-10-21T06:49:40.623613+00:00
+Warning rows failed: 125</title></circle>
+<text x="632.7" y="314" text-anchor="middle" fill="#666" font-size="9">21 12:19</text>
+<text x="632.7" y="326" text-anchor="middle" fill="#999" font-size="8">1674 in</text>
+<circle cx="714.5" cy="207.0" r="3.5" fill="#d62728"><title>manual__2026-10-21T06:51:54.672098+00:00
+Critical rows failed: 139</title></circle>
+<circle cx="714.5" cy="246.5" r="3.5" fill="#ff9900"><title>manual__2026-10-21T06:51:54.672098+00:00
+Warning rows failed: 80</title></circle>
+<text x="714.5" y="314" text-anchor="middle" fill="#666" font-size="9">21 12:22</text>
+<text x="714.5" y="326" text-anchor="middle" fill="#999" font-size="8">2412 in</text>
+<circle cx="796.4" cy="207.0" r="3.5" fill="#d62728"><title>manual__2026-10-21T06:52:57.458275+00:00
+Critical rows failed: 139</title></circle>
+<circle cx="796.4" cy="65.2" r="3.5" fill="#ff9900"><title>manual__2026-10-21T06:52:57.458275+00:00
+Warning rows failed: 351</title></circle>
+<text x="796.4" y="314" text-anchor="middle" fill="#666" font-size="9">21 12:23</text>
+<text x="796.4" y="326" text-anchor="middle" fill="#999" font-size="8">2412 in</text>
+<circle cx="878.2" cy="275.3" r="3.5" fill="#d62728"><title>manual__2026-10-21T06:53:46.053163+00:00
+Critical rows failed: 37</title></circle>
+<circle cx="878.2" cy="170.9" r="3.5" fill="#ff9900"><title>manual__2026-10-21T06:53:46.053163+00:00
+Warning rows failed: 193</title></circle>
+<text x="878.2" y="314" text-anchor="middle" fill="#666" font-size="9">21 12:23</text>
+<text x="878.2" y="326" text-anchor="middle" fill="#999" font-size="8">50 in</text>
+<circle cx="960.0" cy="207.0" r="3.5" fill="#d62728"><title>manual__2026-10-21T06:54:01.723568+00:00
+Critical rows failed: 139</title></circle>
+<circle cx="960.0" cy="246.5" r="3.5" fill="#ff9900"><title>manual__2026-10-21T06:54:01.723568+00:00
+Warning rows failed: 80</title></circle>
+<text x="960.0" y="314" text-anchor="middle" fill="#666" font-size="9">21 12:24</text>
+<text x="960.0" y="326" text-anchor="middle" fill="#999" font-size="8">2412 in</text>
+<rect x="750" y="34" width="12" height="12" fill="#d62728"/><text x="768" y="44">Critical rows failed (quarantined)</text>
+<rect x="750" y="52" width="12" height="12" fill="#ff9900"/><text x="768" y="62">Warning rows failed (loaded, logged)</text>
+</svg>

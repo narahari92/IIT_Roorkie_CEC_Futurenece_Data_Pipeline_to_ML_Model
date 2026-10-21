@@ -1,0 +1,51 @@
+{
+  "run_id": "manual__2026-10-21T06:33:05.344057+00:00",
+  "total_quarantined": 34,
+  "files": {
+    "customers.csv": {
+      "rows_in": 405,
+      "rows_passed": 400,
+      "rows_quarantined": 5,
+      "by_reason": {
+        "customers.customer_id_unique": 5
+      },
+      "file": "/usr/local/airflow/include/quarantine/hosur_narahari/customers_failed_manual__2026-10-21T06_33_05.344057_00_00.csv"
+    },
+    "products.csv": {
+      "rows_in": 152,
+      "rows_passed": 150,
+      "rows_quarantined": 2,
+      "by_reason": {
+        "products.superseded_old_row": 2,
+        "products.product_id_unique": 2
+      },
+      "file": "/usr/local/airflow/include/quarantine/hosur_narahari/products_failed_manual__2026-10-21T06_33_05.344057_00_00.csv"
+    },
+    "stores.csv": {
+      "rows_in": 15,
+      "rows_passed": 15,
+      "rows_quarantined": 0,
+      "by_reason": {},
+      "file": "/usr/local/airflow/include/quarantine/hosur_narahari/stores_failed_manual__2026-10-21T06_33_05.344057_00_00.csv"
+    },
+    "orders_2026-10-01_increment.csv": {
+      "rows_in": 160,
+      "rows_passed": 160,
+      "rows_quarantined": 0,
+      "by_reason": {},
+      "file": "/usr/local/airflow/include/quarantine/hosur_narahari/orders_2026-10-01_increment_failed_manual__2026-10-21T06_33_05.344057_00_00.csv"
+    },
+    "payments.csv": {
+      "rows_in": 2228,
+      "rows_passed": 2201,
+      "rows_quarantined": 27,
+      "by_reason": {
+        "payments.success_amount_positive": 10,
+        "payments.order_id_in_orders": 8,
+        "payments.payment_ts_not_future": 5,
+        "payments.payment_id_unique": 4
+      },
+      "file": "/usr/local/airflow/include/quarantine/hosur_narahari/payments_failed_manual__2026-10-21T06_33_05.344057_00_00.csv"
+    }
+  }
+}
