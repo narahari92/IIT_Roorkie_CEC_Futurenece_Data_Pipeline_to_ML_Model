@@ -10,7 +10,7 @@
 | Part B — ELT pipeline | ✅ below |
 | Part C — Scheduling answers | ✅ below |
 | Part D — Data quality dimensions | ✅ below |
-| Part E — Governance answers | ⏳ |
+| Part E — Governance answers | ✅ below |
 | Part F — Observability results | ⏳ |
 | Part G — Recommendation to CTO | ⏳ |
 | Business questions (SQL + results) | ⏳ |
@@ -423,3 +423,138 @@ WHERE a.dag_id LIKE '%etl%' AND b.dag_id LIKE '%elt%' AND a.run_id = :etl_run AN
   AND a.rows_failed <> b.rows_failed;
 ```
 `scripts/dq_scorecard.py` runs all of these (coverage matrix, parity, non-passing checks, trend).
+
+
+---
+
+## Part E — Data governance
+
+### E.1 Ownership
+
+| Dataset | Owner (accountable) | Steward (day-to-day) | Where it shows in the pipeline |
+|---|---|---|---|
+| `orders.csv` | Head of Operations (Kavya, COO's org) | OMS product owner | `raw_orders`, `etl_fact_orders`, `stg_orders` |
+| `payments.csv` | Head of Finance | Payments/gateway integration lead | `raw_payments`, `etl_payments`, `stg_payments`, reconciliation tables |
+| `customers.csv` | Head of Growth/CRM, jointly with the DPO for personal data | CRM admin | `raw_customers` (unmasked), `etl_dim_customer`/`stg_customers` (masked) |
+| `products.csv` | Category management | Catalogue team | `raw_products`, `etl_dim_product`, `stg_products` |
+| `stores.csv` | Head of Operations | Store ops manager | `raw_stores`, `etl_dim_store`, `stg_stores` |
+| Warehouse tables (`etl_*`, `stg_*`, `mart_*`, `dq_results`, `pipeline_runs`) | Data/engineering (the FDE team now, a NammaMart data lead later) | same | `include/warehouse_hosur_narahari.duckdb` |
+
+**Who approves a rule change such as the 120-minute delivery limit?** The *business owner* of the rule approves the threshold (Ops for delivery time, Finance for payment tolerance, Category for `cost_price ≤ mrp`); the data team implements it. Mechanically the rule is one line in `quality.py` (`delivery_minutes_below_120`) and one line in `stg_orders.sql`, changed via a pull request that must touch both so ETL and ELT stay in parity; the PR description cites the approver, and `dq_results` from the next run is the proof of effect (rows_failed moves from 6 to whatever the new limit yields).
+
+### E.2 Data dictionary — fact and dimension tables (ETL names; ELT `stg_*` equivalents in brackets)
+
+**`etl_fact_orders`** (`stg_orders`, 2,312 rows at base state; grain = one order line)
+
+| Column | Type | Meaning | Source | Allowed values / rule | PII |
+|---|---|---|---|---|---|
+| `order_id` | VARCHAR, PK | Order identifier | orders.csv | `ORD\d{6}`, unique | no |
+| `order_ts` | TIMESTAMP | When the order was placed (IST) | orders.csv `order_ts` | strict `YYYY-MM-DD HH:MM:SS`, ≤ run time | no |
+| `order_date` | DATE | Calendar day of `order_ts` | derived | — | no |
+| `customer_id` | VARCHAR, FK | Buyer | orders.csv | exists in dim_customer | no (key only) |
+| `store_id` | VARCHAR, FK | Fulfilling dark store | orders.csv | `S01`–`S15` | no |
+| `product_id` | VARCHAR, FK | Item | orders.csv | exists in dim_product | no |
+| `quantity` | INTEGER | Units | orders.csv | > 0 | no |
+| `unit_price` | DOUBLE | Selling price per unit (₹) | orders.csv | > 0; ≤ mrp (warning) | no |
+| `discount_pct` | DOUBLE | Discount percent | orders.csv | 0–100 | no |
+| `order_amount` | DOUBLE | Line value after discount (₹) | orders.csv | = qty × price × (1 − disc/100) ± 0.01 | no |
+| `payment_mode` | VARCHAR | Tender type | orders.csv (standardised) | UPI · Card · Cash on Delivery · Wallet | no |
+| `order_status` | VARCHAR | Lifecycle state | orders.csv (upper-cased) | DELIVERED · CANCELLED · RETURNED | no |
+| `channel` | VARCHAR | Ordering channel | orders.csv | App · Web | no |
+| `delivery_minutes` | INTEGER | Minutes from order to hand-over | orders.csv | not null if DELIVERED; < 120 (8–35 normal) | no |
+| `is_delivered` | BOOLEAN | `order_status = 'DELIVERED'` | derived | — | no |
+| `net_revenue` | DOUBLE | `order_amount` if delivered else 0 | derived | ≥ 0 | no |
+| `cogs` | DOUBLE | `quantity × cost_price` if delivered | derived (dim_product) | ≥ 0 | no |
+| `gross_margin` | DOUBLE | `net_revenue − cogs` | derived | may be negative (loss-leader) | no |
+| `within_15_min` | BOOLEAN | SLA flag, delivered orders only | derived | NULL if not delivered | no |
+| `dq_warnings` | VARCHAR | `;`-joined Warning rule names | quality engine | rule names from Part D | no |
+| `loaded_at`, `run_id` | TIMESTAMP, VARCHAR | Lineage: when / which run wrote the row | pipeline | — | no |
+| `effective_date` | DATE | As-of date of the source file (from its name) | pipeline | NULL for undated snapshots | no |
+| *(ELT only)* `dq_status`, `failure_reason`, `_source_file`, `_run_id`, `_row_num`, `_staged_at` | | staging keeps FAILED survivors and exact file/line lineage | | | no |
+
+**`etl_dim_customer`** (`stg_customers`, 400 rows)
+
+| Column | Type | Meaning | Source | Allowed / rule | PII |
+|---|---|---|---|---|---|
+| `customer_id` | VARCHAR, PK | Customer key | customers.csv | unique (last row wins) | no |
+| `full_name` | VARCHAR | Customer name | customers.csv | — | **yes** (kept for top-customer report; see E.4) |
+| `email_masked` | VARCHAR | `pr***@example.com` | customers.csv `email` | masked, never raw | yes (masked) |
+| `phone_masked` | VARCHAR | `98******21` | customers.csv `phone` | masked, never raw | yes (masked) |
+| `city`, `area`, `pincode` | VARCHAR | Location | customers.csv | pincode `[1-9]\d{5}` (warning) | quasi-identifier |
+| `signup_date` | DATE | CRM signup | customers.csv | ≤ today (warning) | no |
+| `loyalty_tier` | VARCHAR | Programme tier | customers.csv (Title-cased) | Bronze · Silver · Gold · Platinum | no |
+| `is_active` | BOOLEAN | CRM active flag | `Y/N` | — | no |
+
+**`etl_dim_product`** (`stg_products`, 150 rows): `product_id` PK · `product_name` · `category` (6 known values or `Unknown`) · `sub_category` · `brand` · `mrp` DOUBLE (> 0, warning) · `cost_price` DOUBLE (> 0; ≤ mrp warning) · `unit` (pack/unit/kg) · `is_perishable` BOOLEAN · `launch_date` DATE. No PII.
+
+**`etl_dim_store`** (`stg_stores`, 15 rows): `store_id` PK (`S01`–`S15`) · `store_name` · `zone` (North/South/East/West/`Unknown`) · `area` · `pincode` · `open_date` DATE · `manager_name` VARCHAR (**employee PII**) · `capacity_orders_per_day` INTEGER (> 0, warning).
+
+### E.3 Lineage — tracing one number
+
+**The number:** `mart_daily_store_kpis` → `2026-09-01`, store `S04` (Jayanagar): `net_revenue = 1103.30`, `gross_margin = 55.06`, `delivered_orders = 1`.
+
+**In ELT (three queries, no guessing):**
+1. `stg_orders WHERE order_date='2026-09-01' AND store_id='S04' AND dq_status='PASSED'` → one row, `ORD000052`, `order_amount 1103.3`, `quantity 2`, `product_id P0068`, **`_source_file='orders.csv'`, `_row_num=2075`**, `_run_id='scheduled__2026-10-21T03:30:00+00:00'`.
+2. `raw_orders WHERE order_id='ORD000052'` → the row exactly as received: `2026-09-01 17:20:19, C00157, S04, P0068, 2, 649.0, 15, 1103.3, Wallet, DELIVERED, App, 23`, `_row_num=2075` → `sed -n 2076p orders.csv` (header is line 1) prints the identical text.
+3. The margin: `stg_products WHERE product_id='P0068'` → `cost_price 524.12`, **`products.csv` row 68** → 1103.30 − 2 × 524.12 = 55.06 ✓ (P0068 is one of the blank-category products, hence it sits in the `Unknown` bucket of `mart_category_margin`).
+
+**In ETL:** `etl_fact_orders WHERE order_date='2026-09-01' AND store_id='S04'` → `ORD000052`, `net_revenue 1103.3`, `cogs 1048.24`, `gross_margin 55.06`, `run_id`, `loaded_at`. That tells me *which run* produced it and the arithmetic, but not the file line: I have to `grep -n '^ORD000052,' orders.csv` (line 2076) and trust that the current file is what that run read — the per-run `include/work/<run_id>/orders_raw.csv` snapshot exists only until it is cleaned up, and the pandas path has no row number.
+
+**Which is easier, and why.** ELT, clearly. The lineage is *data*, not inference: `raw_*` keeps every row with `_source_file`/`_row_num`/`_run_id`, and staging carries those columns forward, so file → row → staged row → mart is a join. In ETL the raw bytes never enter the warehouse; lineage stops at `run_id`, and reconstructing "what did the file look like at 9 AM" depends on files outside the database. (The ETL quarantine files do keep as-received rows, but only for *rejected* rows.)
+
+### E.4 Personal data
+
+**Columns that are personal data:** `customers.full_name`, `customers.email`, `customers.phone` (direct identifiers); `customers.area` + `customers.pincode` + `signup_date` (quasi-identifiers — together they can single out a person in a 15-store city); `stores.manager_name` (employee personal data). Everything in `orders`/`payments` is transactional, but `customer_id` links to the person, so joined outputs inherit the sensitivity.
+
+**How it was masked:** email keeps the first two characters of the local part and the full domain (`priya.hegde199@example.com` → `pr***@example.com`); phone keeps the first two and last two digits (`9774349021` → `97******21`). Identical logic in Python (`masking.py`) and SQL (`stg_customers.sql`), applied *before* any reporting table is written, so `etl_dim_customer`, `stg_customers`, `mart_top_customers` never contain a raw email or phone. `full_name` and `manager_name` are kept (the business asked for "top customers by name"); if the DPO disagrees they are one `CASE`/`map` away from `P. H***`.
+
+**Why mask rather than delete:** the columns still carry analytic value — domain mix tells marketing which providers customers use, the masked shape lets support confirm "is this the 97…21 number?" without seeing it, and masked values remain joinable on `customer_id`. Deleting would also break the uniqueness check that caught five customers whose phone changed. Masking keeps utility and auditability while removing identifiability from every table analysts touch.
+
+**Applicable law:** the **Digital Personal Data Protection Act, 2023 (DPDP Act)** and the DPDP Rules notified in 2025. NammaMart is a *Data Fiduciary*; customers are *Data Principals*. The Act expects: a lawful basis (consent or a legitimate use such as fulfilling the order) and purpose limitation — order data collected to deliver groceries should not be re-purposed for analytics without notice; **data minimisation** (hence masking in reporting tables); reasonable security safeguards and access control; notification of personal-data breaches to the Data Protection Board and affected principals; honouring principals' rights to access, correction and erasure (so we need to be able to find and delete `C00199` across raw, staging and marts); and retention only as long as the purpose requires. Penalties run to ₹250 crore per breach, which is why "spreadsheets with phone numbers passed around" is the first thing this pipeline removes.
+
+### E.5 Access control
+
+| Table family | Who may read | Why |
+|---|---|---|
+| `raw_customers` (unmasked email/phone/name) | Nobody by default. Break-glass only: the DPO or a named data engineer, for a logged incident/erasure request. Not Finance, not Ops, not analysts. | It is the only place raw PII exists; its purpose is replay and legal audit, not analysis. |
+| other `raw_*` (orders, payments, products, stores) | Data engineering, internal audit, compliance | Needed for replay, lineage and "show me the row as received" |
+| `stg_*`, `stg_rejections`, `etl_quarantine`, quarantine CSVs | Data engineering, data-quality stewards, Finance ops (reconciliation), internal audit | Contain FAILED rows and masked PII; useful to explain rejections, too noisy for dashboards |
+| `mart_*`, `etl_fact_orders`, `etl_dim_*`, `etl_daily_zone_revenue`, `etl_category_margin` | Everyone in the ops/finance/leadership review; BI tools | Masked, validated, business-ready |
+| `dq_results`, `pipeline_runs` | Everyone (read-only) | "Did today's run work?" should be answerable without asking engineering |
+
+Implementation in this setup: DuckDB has no row-level grants, so the practical control is *who can open the file* (filesystem/Docker volume permissions) plus publishing the mart layer to a separate read-only database/export for BI, and keeping `raw_customers` out of any shared copy. In a managed warehouse this becomes schemas (`raw`, `staging`, `mart`) with grants per role.
+
+### E.6 Retention
+
+- **Raw** (`raw_*`): 7 years for `raw_orders`/`raw_payments` — Indian tax and company-law books-of-account requirements, and they are the audit trail for revenue; `raw_customers` **90 days**, then rows for customers who have erased/left are deleted and the rest re-masked in place — DPDP says keep personal data only as long as the purpose needs it, and the replay purpose is satisfied within a quarter.
+- **Quarantine files / `stg_rejections` / `etl_quarantine`**: 180 days. Long enough for source teams to fix root causes and for a quarterly quality review; after that they are summarised into `mart_rejections`-style counts and the row-level files deleted (they contain unmasked raw rows, including the blank-customer orders).
+- **Masked customer dimension**: lifetime of the customer relationship + 1 year, then anonymised (`customer_id` hashed, name dropped) — masked data is still personal data under DPDP if it can be linked back via `customer_id`.
+- **Marts / facts**: 7 years (financial reporting), but they contain no direct identifiers. "After that" means a scheduled Airflow task that deletes/anonymises, writes the counts to `pipeline_runs`, and is itself audited — retention that is not automated is not retention.
+
+### E.7 Secrets
+
+Credentials live in Airflow's metadata database as **Variables/Connections** (encrypted with the Fernet key) and are read at run time with `Variable.get("SLACK_WEBHOOK_URL", default_var=None)` — exactly how the trainer's `slack_notifier.py` does it and how the Part F alert will. Locally they are set in the UI (Admin → Variables) or `airflow_settings.yaml`, which is **git-ignored**; the repo contains no key, password or URL. They must never sit in the DAG file or on GitHub because (a) a DAG file is read by every scheduler/worker and shown in the UI *Code* tab to anyone with DAG access, (b) git history is forever — a webhook committed once is leaked even after deletion, and public repos are scraped within minutes, and (c) a leaked Slack webhook lets anyone post as the pipeline, which is the perfect channel for a phishing message to Finance. Rotation is also trivial when the secret is a Variable and impossible when it is baked into code.
+
+### E.8 Audit — "pick a rejected order"
+
+Example: **`ORD001296`**.
+
+| Question | ETL | ELT |
+|---|---|---|
+| Exactly as received | `include/quarantine/hosur_narahari/orders_failed_<run_id>.csv` line for `ORD001296`, or `etl_quarantine.raw_row` → `{"order_id":"ORD001296","order_ts":"2026-09-17 16:07:59","customer_id":"C00305","store_id":"S03","product_id":"P0046","quantity":"-2","unit_price":"197.0","discount_pct":"0","order_amount":"-394.0","payment_mode":"UPI","order_status":"DELIVERED","channel":"App","delivery_minutes":"35"}` | `raw_orders WHERE order_id='ORD001296'` → same values, `_source_file='orders.csv'`, `_row_num=800` (= line 801 of the file), untouched; `stg_rejections.raw_row` holds the same JSON |
+| The rule it broke | `failure_reason = orders.quantity_positive` (Accuracy, Critical) | identical: `stg_rejections.failure_reason` and `stg_orders.dq_status='FAILED'` |
+| Proof it is not in the CFO's total | `SELECT COUNT(*) FROM etl_fact_orders WHERE order_id='ORD001296'` → **0**; `etl_daily_zone_revenue` is built only from that table | `SELECT COUNT(*) FROM stg_orders WHERE order_id='ORD001296' AND dq_status='PASSED'` → **0**; every `mart_*` filters `dq_status='PASSED'` |
+| Its payment | `PAY0000737` (−394, SUCCESS) is quarantined too (`payments.success_amount_positive`) and appears in `etl_payment_reconciliation` as `payment_for_quarantined_order` | same reason code in `mart_payment_reconciliation` |
+
+Both answer finance, but ELT answers *inside SQL* (row → rejection → mart in three joins), while ETL needs the file system for the as-received row.
+
+### E.9 Change history — DELIVERED on 3 Sep, RETURNED on 1 Oct
+
+Concrete case from the increment: `ORD000017` (1 Sep, ₹16.00) and nine others. After the incremental load:
+
+- **ETL**: the fact row is replaced (`updated=10`) → `order_status='RETURNED'`, `net_revenue=0`. September revenue drops from ₹1,135,628.80 to ₹1,131,435.10. The old DELIVERED version is gone from the warehouse; its only trace is the previous run's work snapshot and `run_id` on the new row.
+- **ELT**: `stg_orders` is MERGED → same current view, September ₹1,131,435.10. But `raw_orders` still holds **both** rows: `DELIVERED` from `orders.csv` (row 1256) and `RETURNED` from `orders_2026-10-01_increment.csv` (row 1), each with `_loaded_at`. The history is queryable: `SELECT order_status, _source_file, _loaded_at FROM raw_orders WHERE order_id='ORD000017' ORDER BY _loaded_at`.
+
+**Which answer does finance want?** Both, for different purposes. The *closed books* for September must not move after month-end — September revenue "as reported" stays ₹1,135,628.80 and the ₹16 return is booked as an October adjustment (a sales return in the period it happened). The *operational/current* view (how much of what we sold in September did we actually keep?) is ₹1,131,435.10. A single mutable fact table can only show one of them.
+
+**How to keep both views:** (1) keep raw append-only (ELT already does) so any "as of date X" state can be rebuilt by replaying files loaded before X; (2) add an `order_status_history` table (or an SCD-2 fact with `valid_from/valid_to`) populated from raw on every run — one row per status change with the file that reported it — so `SUM(amount) WHERE status_as_of('2026-09-30')='DELIVERED'` is a query, not an archaeology project; (3) snapshot period-end marts (`mart_daily_store_kpis_2026_09` frozen after close). The guard added in this part (a stale snapshot can never regress RETURNED→DELIVERED) protects the *current* view; the history table protects the *as-reported* view.

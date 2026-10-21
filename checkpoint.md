@@ -22,8 +22,8 @@
 - [x] **Part A** — ETL DAG `dags/nammamart_etl_hosur_narahari.py` + helpers `include/nammamart/{config,quality,standardise,masking,warehouse,etl_steps}.py`. Verified: parses, green run in UI, idempotent (re-run → 0 inserts), increment via `--conf '{"orders_file": "orders_2026-10-01_increment.csv"}'` → updated=10 inserted=150. Approved.
 - [x] **Part B** — ELT DAG `dags/nammamart_elt_hosur_narahari.py` + `include/nammamart/elt_steps.py` + 14 SQL files in `include/sql/` (raw_load, stg_common_ddl, stg_×5, mart_×7). Verified: green run, raw append-only, staging MERGE (+150/10 updated), marts match ETL exactly (Sept 2088 / 1,135,628.80 / 260,999.43). Increment via `--conf '{"increment_file": "orders_2026-10-01_increment.csv"}'`. **Awaiting user review.**
 - [x] **Part C** — Both DAGs: `schedule="0 9 * * 1-6"`, `start_date=pendulum.datetime(2026,10,1,tz="Asia/Kolkata")`, `catchup=False`, `dagrun_timeout=20m`, default_args retries=2/1min/execution_timeout=10m. Verified next_dagrun = 2026-10-21 03:30 UTC; one catch-up run each; concurrent runs OK (8 lock waits, 0 failures). Answers in SUBMISSION.md §Part C. Approved. (Real 09:00 IST run fired 2026-10-21 for both DAGs.)
-- [x] **Part D** — 72 checks/pipeline (43 Critical, 29 Warning), every dimension × every file in both ETL (quality.py) and ELT (stg_*.sql), identical names, parity 72/72. `dq_results` written every run by both. `scripts/dq_scorecard.py` = coverage/parity/failures/trend. Catalogue + justification in SUBMISSION.md §Part D. **Awaiting user review.**
-- [ ] **Part E** — Governance answers (9 questions)
+- [x] **Part D** — 72 checks/pipeline (43 Critical, 29 Warning), every dimension × every file in both ETL (quality.py) and ELT (stg_*.sql), identical names, parity 72/72. `dq_results` written every run by both. `scripts/dq_scorecard.py` = coverage/parity/failures/trend. Catalogue + justification in SUBMISSION.md §Part D. Approved.
+- [x] **Part E** — 9 governance answers + data dictionary in SUBMISSION.md §Part E, with real traces (lineage: mart S04/2026-09-01 ₹1103.30 → ORD000052 orders.csv line 2076 + P0068 products.csv row 68; audit: ORD001296). Side-fix: stale-snapshot guard in both pipelines. **Awaiting user review.**
 - [ ] **Part F** — `pipeline_runs` audit + 10 observability experiments + 5 pillars
 - [ ] **Part G** — One-page recommendation to CTO
 
@@ -60,6 +60,12 @@
   - `compare_with_etl` final task prints Sept totals of both pipelines and `match` flag.
   - Reserved words bit me: `name`/`rows` can't be bare aliases in DuckDB.
   - `increment_file` Param is nullable (`type=["null","string"]`) so the UI trigger form accepts empty.
+- Part E notes:
+  - Defect found & fixed: a re-load of orders.csv after the increment reverted the 10 RETURNED orders to DELIVERED in both pipelines.
+    Fix: ELT MERGE `WHEN MATCHED AND NOT (t terminal AND s not terminal) AND coalesce(s._effective_date >= t._effective_date, TRUE)`;
+    ETL `warehouse.upsert_guarded(..., ORDER_UPSERT_GUARD)`; `effective_date` = date in file name else NULL (NOT derived from data — junk future ts would fool it).
+    Verified: base→increment→base keeps Sept at 1,131,435.10 in both; ETL logs skipped_guarded=10.
+  - Date rolled to 2026-10-21: the two orders at 2026-10-21 10:15 are no longer "future" → 2312 clean orders / 1,136,808.60 total (Sept-only still 2310 / 1,135,628.80). Both pipelines agree.
 - Part D notes:
   - dq_results per run: 72 rows per DAG; base-run totals 143 critical rows / 82 warning rows / 20 FAIL / 17 WARN / 35 PASS (both pipelines).
   - Bonus "DQ trend chart" deferred to Part F (needs varied data from the experiments to be interesting).
