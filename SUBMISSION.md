@@ -9,7 +9,7 @@
 | Part A — ETL pipeline | ✅ below |
 | Part B — ELT pipeline | ✅ below |
 | Part C — Scheduling answers | ✅ below |
-| Part D — Data quality dimensions | ⏳ |
+| Part D — Data quality dimensions | ✅ below |
 | Part E — Governance answers | ⏳ |
 | Part F — Observability results | ⏳ |
 | Part G — Recommendation to CTO | ⏳ |
@@ -270,3 +270,156 @@ Nothing — at 09:00 IST the scheduler would be idle. A naive/UTC `start_date` m
 No run happens at 9 — there is no scheduler alive to create it, so the 09:30 meeting has no fresh numbers. When Docker comes back, the scheduler notices the most recent slot (`2026-10-20T03:30`) has no run and, because `catchup=False`, creates **one** run for that slot and executes it immediately — this is exactly what happened above when the schedule was applied at 22:00 IST: one `scheduled__2026-10-20T03:30` run per DAG, not runs for 1–19 October. If the laptop had been off for a week, still only the latest slot would run (correct for full-snapshot files). The honest conclusion for Sameer: a laptop is not a production scheduler. The pipeline should run on an always-on host (a small VM with `astro dev start`, or a managed Airflow deployment), and Part F adds a `pipeline_runs` audit row plus a failure alert so that "no run by 09:05" is noticed rather than discovered in the meeting.
 
 **Screenshots to capture for the submission** (UI at `http://…localhost:6563`): DAGs list showing *Schedule* `0 9 * * 1-6` and *Next run* `2026-10-21, 03:30:00 UTC`; the Grid view of either DAG showing the single `scheduled__2026-10-20T03:30:00+00:00` run in green.
+
+
+---
+
+## Part D — Data quality dimensions
+
+### D.1 How a check works in each pipeline
+
+| | ETL (Python) | ELT (SQL) |
+|---|---|---|
+| Where the rules live | `include/nammamart/quality.py` — one `Check(name, dimension, severity, fn)` per rule, grouped per file in `CHECKS` | `include/sql/stg_<entity>.sql` — one boolean column `f_<rule>` per rule in the `checks` CTE |
+| Standardise before checking | `standardise.py` (trim, casing, payment-mode map) | first CTE `src` (`trim`, `NULLIF`, `upper`, `CASE` map) |
+| **Critical** failure | row → quarantine CSV + `etl_quarantine`; never reaches `etl_fact_orders`/dims | row → `stg_rejections` (raw row as JSON); survivor kept in `stg_*` with `dq_status='FAILED'`; marts filter `dq_status='PASSED'` |
+| **Warning** failure | row loads; reason kept in the fact/dim row's `dq_warnings`; counted in `dq_results` | row loads with `dq_status='PASSED'`; reason kept in `dq_warnings`; counted in `dq_results` |
+| Dataset-level checks (freshness, volume) | `row_level=False` checks return 0/1 | aggregate `CASE … THEN 1 ELSE 0` rows in the `dq_results` insert |
+| `dq_results` writer | task `write_dq_results` (`warehouse.write_dq_results`) | the `INSERT INTO dq_results … UNION ALL` block at the end of each `stg_*.sql` |
+| Rule names | **identical in both** (`orders.quantity_positive`, …) so one scorecard covers both pipelines |
+
+**`dq_results`** (shared by both DAGs; created by `warehouse.DQ_RESULTS_DDL` / `stg_common_ddl.sql`):
+
+| column | meaning |
+|---|---|
+| `run_id`, `dag_id` | which run of which pipeline (`nammamart_etl_…` or `nammamart_elt_…`) |
+| `check_name` | `<file>.<rule>`; the increment batch is prefixed `orders_increment.` |
+| `dimension` | Completeness · Uniqueness · Validity · Accuracy · Consistency · Timeliness |
+| `severity` | Critical (quarantine) · Warning (load + log) |
+| `rows_checked`, `rows_failed` | batch size and failures (0/1 for dataset-level checks) |
+| `status` | `PASS` (0 failed) · `FAIL` (Critical, >0) · `WARN` (Warning, >0) |
+| `checked_at` | IST wall-clock |
+
+Writes are idempotent per `(run_id, dag_id, check prefix)` — clearing and re-running a task replaces its rows rather than appending.
+
+### D.2 Coverage — checks per dimension × file (identical in ETL and ELT)
+
+Output of `.venv/bin/python scripts/dq_scorecard.py`, latest run of each DAG:
+
+| Dimension | customers | orders | payments | products | stores | Critical | Warning |
+|---|---|---|---|---|---|---|---|
+| Completeness | 4 | 4 | 4 | 3 | 2 | 11 | 6 |
+| Uniqueness | 1 | 1 | 1 | 2 | 1 | 6 | 0 |
+| Validity | 5 | 5 | 3 | 2 | 1 | 8 | 8 |
+| Accuracy | 1 | 5 | 1 | 3 | 1 | 6 | 5 |
+| Consistency | 2 | 7 | 3 | 1 | 1 | 8 | 6 |
+| Timeliness | 1 | 3 | 2 | 1 | 1 | 4 | 4 |
+| **Total: 72 checks per pipeline per run** | 14 | 25 | 14 | 12 | 7 | 43 | 29 |
+
+**Parity:** `checks in ETL: 72, in ELT: 72, common: 72, identical rows_failed: 72, mismatches: 0`. Per-run totals are the same for every run so far: 143 Critical rows failed, 82 Warning rows failed, 20 checks FAIL, 17 WARN, 35 PASS.
+
+### D.3 The rule catalogue (generated from `quality.py`; the SQL mirrors it name for name)
+
+| # | Check (`dq_results.check_name`) | Dimension | Severity | Rule | Rows failed (base run) |
+|---|---|---|---|---|---|
+| 1 | `orders.order_id_not_null` | Completeness | **Critical** | order_id present | 0 |
+| 2 | `orders.customer_id_not_null` | Completeness | **Critical** | customer_id present | 18 |
+| 3 | `orders.order_ts_not_null` | Completeness | **Critical** | order_ts present | 2 |
+| 4 | `orders.delivered_has_delivery_minutes` | Completeness | **Critical** | DELIVERED ⇒ delivery_minutes not null | 8 |
+| 5 | `orders.order_id_unique` | Uniqueness | **Critical** | order_id seen once (keep first) | 12 |
+| 6 | `orders.order_ts_parses` | Validity | **Critical** | strict `YYYY-MM-DD HH:MM:SS` | 4 |
+| 7 | `orders.order_status_in_list` | Validity | **Critical** | ∈ {DELIVERED, CANCELLED, RETURNED} after UPPER/TRIM | 3 |
+| 8 | `orders.payment_mode_in_list` | Validity | **Critical** | ∈ {UPI, Card, Cash on Delivery, Wallet} after mapping | 0 |
+| 9 | `orders.discount_pct_0_100` | Validity | **Critical** | 0 ≤ discount ≤ 100 | 3 |
+| 10 | `orders.channel_in_list` | Validity | **Warning** | ∈ {App, Web} | 0 |
+| 11 | `orders.quantity_positive` | Accuracy | **Critical** | quantity > 0 | 10 |
+| 12 | `orders.unit_price_positive` | Accuracy | **Critical** | unit_price > 0 | 0 |
+| 13 | `orders.order_amount_matches_formula` | Accuracy | **Critical** | |amount − qty×price×(1−disc/100)| ≤ 0.01 | 18 |
+| 14 | `orders.delivery_minutes_below_120` | Accuracy | **Critical** | delivery_minutes < 120 | 6 |
+| 15 | `orders.delivery_minutes_in_normal_range` | Accuracy | **Warning** | 8 ≤ minutes ≤ 35 | 0 |
+| 16 | `orders.customer_id_in_master` | Consistency | **Critical** | customer exists in customers.csv | 0 |
+| 17 | `orders.product_id_in_master` | Consistency | **Critical** | product exists in products.csv | 9 |
+| 18 | `orders.store_id_in_master` | Consistency | **Critical** | store exists in stores.csv | 5 |
+| 19 | `orders.customer_row_quarantined` | Consistency | **Critical** | customer exists but its row failed a Critical rule | 0 |
+| 20 | `orders.product_row_quarantined` | Consistency | **Critical** | product exists but its row failed a Critical rule | 0 |
+| 21 | `orders.store_row_quarantined` | Consistency | **Critical** | store exists but its row failed a Critical rule | 0 |
+| 22 | `orders.unit_price_not_above_mrp` | Consistency | **Warning** | unit_price ≤ product mrp | 11 |
+| 23 | `orders.order_ts_not_future` | Timeliness | **Critical** | order_ts ≤ run time | 7 |
+| 24 | `orders.latest_order_not_stale` | Timeliness | **Warning** | newest (non-future) order_ts within 1 day of run | 1 |
+| 25 | `orders.volume_not_anomalous` | Timeliness | **Warning** | ≥ 500 order rows received | 0 |
+| 26 | `payments.payment_id_not_null` | Completeness | **Critical** | payment_id present | 0 |
+| 27 | `payments.order_id_not_null` | Completeness | **Critical** | order_id present | 0 |
+| 28 | `payments.amount_paid_not_null` | Completeness | **Critical** | amount_paid numeric | 0 |
+| 29 | `payments.gateway_ref_present_for_non_cod` | Completeness | **Warning** | gateway_ref present unless COD | 0 |
+| 30 | `payments.payment_id_unique` | Uniqueness | **Critical** | payment_id seen once | 4 |
+| 31 | `payments.payment_ts_parses` | Validity | **Critical** | strict timestamp | 0 |
+| 32 | `payments.payment_status_in_list` | Validity | **Critical** | ∈ {SUCCESS, FAILED, REFUNDED} | 0 |
+| 33 | `payments.payment_mode_in_list` | Validity | **Critical** | ∈ allowed modes after mapping | 0 |
+| 34 | `payments.success_amount_positive` | Accuracy | **Critical** | SUCCESS ⇒ amount_paid > 0 | 10 |
+| 35 | `payments.order_id_in_orders` | Consistency | **Critical** | order exists in any orders file ever received | 8 |
+| 36 | `payments.mode_matches_order` | Consistency | **Warning** | payment_mode = order's payment_mode | 0 |
+| 37 | `payments.success_amount_equals_order_amount` | Consistency | **Warning** | SUCCESS ⇒ amount_paid = order_amount | 14 |
+| 38 | `payments.payment_ts_not_future` | Timeliness | **Critical** | payment_ts ≤ run time | 7 |
+| 39 | `payments.latest_payment_not_stale` | Timeliness | **Warning** | newest payment within 1 day | 1 |
+| 40 | `customers.customer_id_not_null` | Completeness | **Critical** | customer_id present | 0 |
+| 41 | `customers.full_name_not_null` | Completeness | **Warning** | full_name present | 0 |
+| 42 | `customers.city_not_null` | Completeness | **Warning** | city present | 6 |
+| 43 | `customers.email_not_null` | Completeness | **Warning** | email present | 4 |
+| 44 | `customers.customer_id_unique` | Uniqueness | **Critical** | customer_id once (keep LAST = current address) | 5 |
+| 45 | `customers.email_format` | Validity | **Warning** | regex `local@domain.tld` | 8 |
+| 46 | `customers.phone_10_digits` | Validity | **Warning** | regex `[6-9]\d{9}` | 7 |
+| 47 | `customers.pincode_6_digits` | Validity | **Warning** | regex `[1-9]\d{5}` | 5 |
+| 48 | `customers.is_active_Y_N` | Validity | **Warning** | ∈ {Y, N} | 0 |
+| 49 | `customers.signup_date_parses` | Validity | **Critical** | strict `YYYY-MM-DD` | 0 |
+| 50 | `customers.loyalty_tier_in_list` | Consistency | **Critical** | ∈ {Bronze, Silver, Gold, Platinum} after Title-case | 0 |
+| 51 | `customers.loyalty_tier_casing_was_fixed` | Consistency | **Warning** | raw tier differed from canonical casing | 8 |
+| 52 | `customers.signup_date_not_future` | Timeliness | **Warning** | signup_date ≤ run date | 3 |
+| 53 | `customers.signup_not_after_first_order` | Accuracy | **Warning** | signup_date ≤ customer's first order | 3 |
+| 54 | `products.product_id_not_null` | Completeness | **Critical** | product_id present | 0 |
+| 55 | `products.category_not_null` | Completeness | **Warning** | category present (else → 'Unknown') | 3 |
+| 56 | `products.product_name_not_null` | Completeness | **Critical** | product_name present | 0 |
+| 57 | `products.superseded_old_row` | Uniqueness | **Critical** | duplicate id whose name ends in "(old)" | 2 |
+| 58 | `products.product_id_unique` | Uniqueness | **Critical** | product_id once (keep non-old, first) | 2 |
+| 59 | `products.is_perishable_bool` | Validity | **Warning** | ∈ {True, False} | 0 |
+| 60 | `products.launch_date_parses` | Validity | **Warning** | strict date | 0 |
+| 61 | `products.mrp_positive` | Accuracy | **Warning** | mrp > 0 | 1 |
+| 62 | `products.cost_price_positive` | Accuracy | **Critical** | cost_price > 0 | 0 |
+| 63 | `products.cost_price_not_above_mrp` | Accuracy | **Warning** | cost_price ≤ mrp | 5 |
+| 64 | `products.category_in_known_list` | Consistency | **Warning** | ∈ the 6 known categories | 0 |
+| 65 | `products.launch_date_not_future` | Timeliness | **Critical** | launch_date ≤ run date | 0 |
+| 66 | `stores.store_id_not_null` | Completeness | **Critical** | store_id present | 0 |
+| 67 | `stores.zone_not_null` | Completeness | **Warning** | zone present (else → 'Unknown') | 1 |
+| 68 | `stores.store_id_unique` | Uniqueness | **Critical** | store_id once | 0 |
+| 69 | `stores.pincode_6_digits` | Validity | **Warning** | regex 6 digits | 0 |
+| 70 | `stores.capacity_positive` | Accuracy | **Warning** | capacity_orders_per_day > 0 | 1 |
+| 71 | `stores.zone_in_list` | Consistency | **Warning** | ∈ {North, South, East, West} | 0 |
+| 72 | `stores.open_date_not_future` | Timeliness | **Critical** | open_date ≤ run date | 0 |
+
+
+### D.4 Why these severities
+
+- **Critical = the row itself is wrong or unusable for revenue.** Missing/invalid key, duplicate, unparseable or future timestamp, impossible quantity/amount/delivery time, status outside the agreed list, FK to a non-existent master. Any one of these would put a wrong number in the CFO's total, so the row is set aside with its reason (acceptance criteria 2 and 4).
+- **Warning = the row is real but an attribute is doubtful.** Malformed email/phone/pincode (we mask them anyway), tier casing (we fix it), blank `city`/`zone`/`category` (filled with `Unknown` so the revenue stays visible and the gap is *shown* in the report instead of hidden), `cost_price > mrp` (a pricing question for the client, not a data error), delivery 35–119 min (slow, not impossible). Short/failed/missing payments are Warnings on the payment and land in the reconciliation table — finance wants to *see* ₹16.7 k of unbacked revenue, not have it vanish.
+- **Deviation from the suggested table, and why:** `products.category_not_null`, `products.mrp_positive`, `customers.signup_date_not_future` and `stores.zone_not_null` are Warnings here, not Critical. Making them Critical in the first iteration cascaded ~70 valid orders into quarantine (their product/customer master row was dropped). A master-data typo should not delete a day's sales; it should show up as an `Unknown` bucket that someone has to explain. The cascade is still visible when it does happen: `orders.*_row_quarantined` reasons exist for exactly that case.
+- **Timeliness "stale" check will always WARN on this dataset** (newest real order is 30 Sep, run date is Oct): that is the correct answer — the September export *is* stale on a 20 Oct run — and it is Warning, not Critical, because an old-but-complete file is still worth loading.
+
+### D.5 Scorecard queries (used in Part F and for the client's "did today work?" question)
+
+```sql
+-- today's scorecard, both pipelines
+SELECT dag_id, dimension, severity, status, COUNT(*) checks, SUM(rows_failed) rows_failed
+FROM dq_results WHERE run_id = :run_id GROUP BY ALL ORDER BY 1,2,3,4;
+
+-- trend of Critical failures per run (the "quality over time" view)
+SELECT dag_id, run_id, MIN(checked_at) checked_at,
+       SUM(rows_failed) FILTER (WHERE severity='Critical') critical_rows_failed,
+       COUNT(*) FILTER (WHERE status='FAIL') checks_failed
+FROM dq_results GROUP BY 1,2 ORDER BY 3;
+
+-- do ETL and ELT agree? (0 rows = yes)
+SELECT a.check_name, a.rows_failed etl, b.rows_failed elt
+FROM dq_results a JOIN dq_results b USING (check_name)
+WHERE a.dag_id LIKE '%etl%' AND b.dag_id LIKE '%elt%' AND a.run_id = :etl_run AND b.run_id = :elt_run
+  AND a.rows_failed <> b.rows_failed;
+```
+`scripts/dq_scorecard.py` runs all of these (coverage matrix, parity, non-passing checks, trend).
